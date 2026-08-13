@@ -200,6 +200,8 @@ impl DashboardQuery {
         let results = registry
             .dispatch(&RivenEvent::MediaServerDeepLinkRequested {
                 item_type: item.item_type,
+                title: item.title,
+                year: item.year,
                 tmdb_id: item.tmdb_id,
                 tvdb_id: item.tvdb_id,
                 imdb_id: item.imdb_id,

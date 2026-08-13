@@ -194,6 +194,8 @@ pub trait Plugin: Send + Sync + 'static {
     async fn on_media_server_deep_link_requested(
         &self,
         _item_type: crate::types::MediaItemType,
+        _title: &str,
+        _year: Option<i32>,
         _tmdb_id: Option<&str>,
         _tvdb_id: Option<&str>,
         _imdb_id: Option<&str>,
@@ -338,12 +340,16 @@ pub trait Plugin: Send + Sync + 'static {
             }
             RivenEvent::MediaServerDeepLinkRequested {
                 item_type,
+                title,
+                year,
                 tmdb_id,
                 tvdb_id,
                 imdb_id,
             } => {
                 self.on_media_server_deep_link_requested(
                     *item_type,
+                    title,
+                    *year,
                     tmdb_id.as_deref(),
                     tvdb_id.as_deref(),
                     imdb_id.as_deref(),

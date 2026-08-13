@@ -286,6 +286,8 @@ macro_rules! impl_media_server_plugin {
             async fn on_media_server_deep_link_requested(
                 &self,
                 _item_type: riven_core::types::MediaItemType,
+                _title: &str,
+                _year: Option<i32>,
                 tmdb_id: Option<&str>,
                 tvdb_id: Option<&str>,
                 imdb_id: Option<&str>,

@@ -108,33 +108,52 @@ pub(crate) async fn get_artwork(
     })
 }
 
-/// Find an item's `ratingKey` by external id, searching every configured
-/// library at once. Tries `guid`s in the order given and returns the first
-/// hit — callers pass tmdb before tvdb/imdb since Plex's own agents key
-/// movies by TMDB and shows by TVDB, same as riven's own library.
-pub(crate) async fn find_rating_key_by_guid(
+/// Find an item's `ratingKey` by title and release year, searching every
+/// configured library at once.
+///
+/// Not a `guid` lookup: Plex's `/library/all?guid=` filter only matches an
+/// item's own *primary* guid, which on every modern ("new agent") Plex
+/// library is Plex's own opaque identifier (`plex://movie/...`), not the
+/// external id — those live in a separate `Guid[]` array the filter does not
+/// search at all. Confirmed live against a real Plex 1.43 server: a movie
+/// with a correct `tmdb://...` entry in its `Guid[]` still returns zero
+/// results from `?guid=tmdb://...`. Title+year is Plex's own fallback for
+/// exactly this case (its "Match" UI works the same way) — fast, but not a
+/// guaranteed-exact match, since a same-titled remake/reboot with the same
+/// release year would collide.
+pub(crate) async fn find_rating_key_by_title_year(
     http: &riven_core::http::HttpClient,
     plex_url: &str,
     token: &str,
-    guids: &[String],
+    title: &str,
+    year: Option<i32>,
+    plex_type: u8,
 ) -> anyhow::Result<Option<String>> {
-    for guid in guids {
-        let url = format!("{plex_url}/library/all");
-        tracing::debug!(target_url = %url, guid, "searching plex library by guid");
-        let resp: PlexSectionsAllResponse = http
-            .get_json(PROFILE, url.clone(), |client| {
-                client
-                    .get(&url)
-                    .query(&[("guid", guid.as_str())])
-                    .header("x-plex-token", token)
-                    .header("accept", "application/json")
-            })
-            .await?;
-        if let Some(item) = resp.media_container.metadata.into_iter().next() {
-            return Ok(Some(item.rating_key));
-        }
+    let url = format!("{plex_url}/library/all");
+    tracing::debug!(target_url = %url, title, ?year, "searching plex library by title/year");
+    let year_str = year.map(|y| y.to_string());
+    let mut query = vec![
+        ("title", title),
+        ("type", if plex_type == 1 { "1" } else { "2" }),
+    ];
+    if let Some(ref y) = year_str {
+        query.push(("year", y.as_str()));
     }
-    Ok(None)
+    let resp: PlexSectionsAllResponse = http
+        .get_json(PROFILE, url.clone(), |client| {
+            client
+                .get(&url)
+                .query(&query)
+                .header("x-plex-token", token)
+                .header("accept", "application/json")
+        })
+        .await?;
+    Ok(resp
+        .media_container
+        .metadata
+        .into_iter()
+        .next()
+        .map(|item| item.rating_key))
 }
 
 /// The server's own persistent identity, needed to build a deep link — Plex's

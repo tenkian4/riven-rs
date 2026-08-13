@@ -15,8 +15,8 @@ mod client;
 mod paths;
 
 use client::{
-    PlexSection, find_rating_key_by_guid, get_active_sessions, get_artwork, get_library_sections,
-    get_machine_identifier, refresh_section, urlencoding,
+    PlexSection, find_rating_key_by_title_year, get_active_sessions, get_artwork,
+    get_library_sections, get_machine_identifier, refresh_section, urlencoding,
 };
 #[cfg(test)]
 use client::{map_playback_method, map_playback_state};
@@ -204,32 +204,27 @@ impl Plugin for PlexPlugin {
 
     async fn on_media_server_deep_link_requested(
         &self,
-        _item_type: riven_core::types::MediaItemType,
-        tmdb_id: Option<&str>,
-        tvdb_id: Option<&str>,
-        imdb_id: Option<&str>,
+        item_type: riven_core::types::MediaItemType,
+        title: &str,
+        year: Option<i32>,
+        _tmdb_id: Option<&str>,
+        _tvdb_id: Option<&str>,
+        _imdb_id: Option<&str>,
         ctx: &PluginContext,
     ) -> anyhow::Result<HookResponse> {
+        let plex_type = match item_type {
+            riven_core::types::MediaItemType::Movie => 1,
+            riven_core::types::MediaItemType::Show => 2,
+            // Play Now only ever targets a Movie or Show; anything else has
+            // no Plex library-item type to search for.
+            _ => return Ok(HookResponse::Empty),
+        };
         let plex_token = ctx.require_setting("plextoken")?;
         let plex_url = ctx.require_setting("plexserverurl")?.trim_end_matches('/');
 
-        // Movies are agent-matched by TMDB id, shows by TVDB, same as riven's
-        // own library — tried in that order, with IMDB as a last resort for
-        // whichever content a Plex agent happened to key by it instead.
-        let guids: Vec<String> = [
-            tmdb_id.map(|id| format!("tmdb://{id}")),
-            tvdb_id.map(|id| format!("tvdb://{id}")),
-            imdb_id.map(|id| format!("imdb://{id}")),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
-        if guids.is_empty() {
-            return Ok(HookResponse::Empty);
-        }
-
         let Some(rating_key) =
-            find_rating_key_by_guid(&ctx.http, plex_url, plex_token, &guids).await?
+            find_rating_key_by_title_year(&ctx.http, plex_url, plex_token, title, year, plex_type)
+                .await?
         else {
             return Ok(HookResponse::Empty);
         };
