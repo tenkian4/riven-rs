@@ -1431,6 +1431,15 @@ export type QueryRoot = {
   mediaItemStatusesByTvdbIds: Array<MediaItemStatus>;
   mediaItems: Array<MediaItemUnion>;
   /**
+   * The media server's own page for a completed item, for a "Play Now"
+   * button — resolved live, on demand, rather than stored: nothing in
+   * riven tracks a media server's internal item id today, and doing that
+   * lookup only on the rare click a card actually gets (instead of for
+   * every card a carousel renders) keeps this off the hot path entirely.
+   * `None` if no configured media-server plugin could find a match.
+   */
+  mediaServerDeepLink?: Maybe<Scalars['String']['output']>;
+  /**
    * Everything the movie detail page renders, in one shape shared with
    * `showDetails`.
    */
@@ -1632,6 +1641,11 @@ export type QueryRootMediaItemStatusesByTmdbIdsArgs = {
 
 export type QueryRootMediaItemStatusesByTvdbIdsArgs = {
   tvdbIds: Array<Scalars['String']['input']>;
+};
+
+
+export type QueryRootMediaServerDeepLinkArgs = {
+  mediaItemId: Scalars['Int']['input'];
 };
 
 

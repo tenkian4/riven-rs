@@ -190,6 +190,17 @@ pub enum RivenEvent {
         server: String,
         reference: String,
     },
+    /// A user clicked "Play Now" on a completed item. Every media-server
+    /// plugin gets a chance to resolve its own deep link; the first `Some`
+    /// wins, so an instance with more than one configured server picks
+    /// whichever answers first rather than something the caller controls.
+    #[serde(rename = "riven.media-server.deep-link.requested")]
+    MediaServerDeepLinkRequested {
+        item_type: MediaItemType,
+        tmdb_id: Option<String>,
+        tvdb_id: Option<String>,
+        imdb_id: Option<String>,
+    },
 }
 
 impl RivenEvent {
@@ -264,6 +275,7 @@ impl RivenEvent {
             Self::DebridUserInfoRequested => EventType::DebridUserInfoRequested,
             Self::ActivePlaybackSessionsRequested => EventType::ActivePlaybackSessionsRequested,
             Self::ArtworkRequested { .. } => EventType::ArtworkRequested,
+            Self::MediaServerDeepLinkRequested { .. } => EventType::MediaServerDeepLinkRequested,
         }
     }
 }

@@ -108,6 +108,55 @@ pub(crate) async fn get_artwork(
     })
 }
 
+/// Find an item's `ratingKey` by external id, searching every configured
+/// library at once. Tries `guid`s in the order given and returns the first
+/// hit — callers pass tmdb before tvdb/imdb since Plex's own agents key
+/// movies by TMDB and shows by TVDB, same as riven's own library.
+pub(crate) async fn find_rating_key_by_guid(
+    http: &riven_core::http::HttpClient,
+    plex_url: &str,
+    token: &str,
+    guids: &[String],
+) -> anyhow::Result<Option<String>> {
+    for guid in guids {
+        let url = format!("{plex_url}/library/all");
+        tracing::debug!(target_url = %url, guid, "searching plex library by guid");
+        let resp: PlexSectionsAllResponse = http
+            .get_json(PROFILE, url.clone(), |client| {
+                client
+                    .get(&url)
+                    .query(&[("guid", guid.as_str())])
+                    .header("x-plex-token", token)
+                    .header("accept", "application/json")
+            })
+            .await?;
+        if let Some(item) = resp.media_container.metadata.into_iter().next() {
+            return Ok(Some(item.rating_key));
+        }
+    }
+    Ok(None)
+}
+
+/// The server's own persistent identity, needed to build a deep link — Plex's
+/// web app addresses a server by this id, not by its (possibly-changing) URL.
+pub(crate) async fn get_machine_identifier(
+    http: &riven_core::http::HttpClient,
+    plex_url: &str,
+    token: &str,
+) -> anyhow::Result<String> {
+    let url = format!("{plex_url}/identity");
+    tracing::debug!(target_url = %url, "fetching plex server identity");
+    let resp: PlexIdentityResponse = http
+        .get_json(PROFILE, url.clone(), |client| {
+            client
+                .get(&url)
+                .header("x-plex-token", token)
+                .header("accept", "application/json")
+        })
+        .await?;
+    Ok(resp.media_container.machine_identifier)
+}
+
 pub(crate) async fn get_active_sessions(
     http: &riven_core::http::HttpClient,
     plex_url: &str,
@@ -205,6 +254,36 @@ struct PlexSectionsResponse {
 }
 
 #[derive(Deserialize)]
+struct PlexSectionsAllResponse {
+    #[serde(rename = "MediaContainer")]
+    media_container: PlexAllMediaContainer,
+}
+
+#[derive(Deserialize)]
+struct PlexAllMediaContainer {
+    #[serde(rename = "Metadata", default)]
+    metadata: Vec<PlexAllMetadata>,
+}
+
+#[derive(Deserialize)]
+struct PlexAllMetadata {
+    #[serde(rename = "ratingKey")]
+    rating_key: String,
+}
+
+#[derive(Deserialize)]
+struct PlexIdentityResponse {
+    #[serde(rename = "MediaContainer")]
+    media_container: PlexIdentityContainer,
+}
+
+#[derive(Deserialize)]
+struct PlexIdentityContainer {
+    #[serde(rename = "machineIdentifier")]
+    machine_identifier: String,
+}
+
+#[derive(Deserialize)]
 struct PlexMediaContainer {
     #[serde(rename = "Directory", default)]
     directory: Vec<PlexSection>,
@@ -277,11 +356,34 @@ struct PlexUser {
 }
 
 pub(crate) mod urlencoding {
+    /// Path-segment encoding: `/` is left alone since it is a separator, not
+    /// data, in every caller of this function (all of them build a `?path=`
+    /// query value that is itself a filesystem path Plex echoes back as-is).
     pub(crate) fn encode(s: &str) -> String {
         let mut result = String::new();
         for c in s.chars() {
             match c {
                 'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '.' | '~' | '/' => result.push(c),
+                _ => {
+                    for b in c.to_string().as_bytes() {
+                        result.push_str(&format!("%{b:02X}"));
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    /// Full query-value encoding, `/` included — for a value that is not
+    /// itself a path being handed straight to a `path=`-style param, but
+    /// arbitrary data embedded in a query string (Plex's web-app deep link
+    /// embeds a `/library/metadata/...` path as the *value* of `key=`, where
+    /// an unescaped `/` would be read as part of the URL's own structure).
+    pub(crate) fn encode_query_value(s: &str) -> String {
+        let mut result = String::new();
+        for c in s.chars() {
+            match c {
+                'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '.' | '~' => result.push(c),
                 _ => {
                     for b in c.to_string().as_bytes() {
                         result.push_str(&format!("%{b:02X}"));

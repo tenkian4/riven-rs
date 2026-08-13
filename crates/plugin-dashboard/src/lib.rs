@@ -181,6 +181,37 @@ impl DashboardQuery {
         let cache = ctx.data::<Arc<PlaybackSessionsCache>>()?;
         Ok(cache.get_or_refresh(registry).await)
     }
+
+    /// The media server's own page for a completed item, for a "Play Now"
+    /// button — resolved live, on demand, rather than stored: nothing in
+    /// riven tracks a media server's internal item id today, and doing that
+    /// lookup only on the rare click a card actually gets (instead of for
+    /// every card a carousel renders) keeps this off the hot path entirely.
+    /// `None` if no configured media-server plugin could find a match.
+    async fn media_server_deep_link(
+        &self,
+        ctx: &Context<'_>,
+        media_item_id: i64,
+    ) -> GqlResult<Option<String>> {
+        let Some(item) = repo::get_media_item(media_item_id).await? else {
+            return Ok(None);
+        };
+        let registry = ctx.data::<Arc<PluginRegistry>>()?;
+        let results = registry
+            .dispatch(&RivenEvent::MediaServerDeepLinkRequested {
+                item_type: item.item_type,
+                tmdb_id: item.tmdb_id,
+                tvdb_id: item.tvdb_id,
+                imdb_id: item.imdb_id,
+            })
+            .await;
+        for (_, result) in results {
+            if let Ok(HookResponse::MediaServerDeepLink(url)) = result {
+                return Ok(Some(url));
+            }
+        }
+        Ok(None)
+    }
 }
 
 #[cfg(test)]

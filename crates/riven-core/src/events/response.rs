@@ -30,6 +30,11 @@ pub enum HookResponse {
     ///
     /// [`RivenEvent::ArtworkRequested`]: crate::events::RivenEvent::ArtworkRequested
     Artwork(Artwork),
+    /// A media server's own page for an item — answers
+    /// [`RivenEvent::MediaServerDeepLinkRequested`].
+    ///
+    /// [`RivenEvent::MediaServerDeepLinkRequested`]: crate::events::RivenEvent::MediaServerDeepLinkRequested
+    MediaServerDeepLink(String),
     Empty,
 }
 

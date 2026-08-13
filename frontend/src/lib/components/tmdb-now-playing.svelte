@@ -10,8 +10,17 @@
     import { Button } from "$lib/components/ui/button/index.js";
     import { Skeleton } from "$lib/components/ui/skeleton/index.js";
     import { getRatings } from "$lib/stores/ratings";
-    import { Star } from "@lucide/svelte";
+    import { Star, LoaderCircle } from "@lucide/svelte";
+    import ItemRequest from "$lib/components/media/riven/item-request.svelte";
+    import {
+        getLibraryStatus,
+        getResolvedLibraryId,
+        markLibraryStatusRequested
+    } from "$lib/stores/library-status.svelte";
+    import { toast } from "svelte-sonner";
+    import { createScopedLogger } from "$lib/logger";
 
+    const logger = createScopedLogger("tmdb-now-playing");
 
     interface Props {
         data?: TmdbListItem[];
@@ -147,6 +156,46 @@
 
         return () => clearTimeout(timer);
     });
+
+    // "Play Now" only makes sense once riven has actually finished
+    // downloading an item; everything else (not in the library yet, still
+    // indexing/scraping/downloading) falls back to the same Request button
+    // used elsewhere. Populated from an $effect, not $derived — the
+    // underlying resolver writes to its own cache as a side effect of being
+    // read, which Svelte 5 forbids inside a $derived evaluation (see
+    // list-item.svelte's identical `resolved` pattern for the same reason).
+    let resolvedEntries = $state<Record<number, ReturnType<typeof getResolvedLibraryId>>>({});
+    let statusEntries = $state<Record<number, ReturnType<typeof getLibraryStatus>>>({});
+    $effect(() => {
+        if (!data || data.length === 0) return;
+        for (const item of data) {
+            const mediaType = item.mediaType === "tv" ? "tv" : "movie";
+            resolvedEntries[item.id] = getResolvedLibraryId("tmdb", String(item.id), mediaType);
+            statusEntries[item.id] = getLibraryStatus("tmdb", String(item.id), mediaType);
+        }
+    });
+
+    let deepLinkLoadingId = $state<number | null>(null);
+
+    async function playNow(tmdbItemId: number, mediaItemId: number) {
+        deepLinkLoadingId = tmdbItemId;
+        try {
+            const result = await gqlClient<{ mediaServerDeepLink: string | null }>(
+                `query MediaServerDeepLink($id: Int!) { mediaServerDeepLink(mediaItemId: $id) }`,
+                { id: mediaItemId }
+            );
+            if (result.mediaServerDeepLink) {
+                window.open(result.mediaServerDeepLink, "_blank", "noopener,noreferrer");
+            } else {
+                toast.error("Couldn't find this in your media server yet.");
+            }
+        } catch (e) {
+            logger.error("Failed to resolve media server deep link", e);
+            toast.error("Couldn't open in your media server.");
+        } finally {
+            deepLinkLoadingId = null;
+        }
+    }
 
     function getAlignmentClasses(
         align: "left" | "center" | "right",
@@ -364,13 +413,42 @@
                                             'flex'
                                         )}">
                                         {#if showRequestButton}
-                                            <Button
-                                                href="/watch/{item.id}"
-                                                variant="default"
-                                                size="lg"
-                                                class="bg-primary text-primary-foreground hover:bg-primary/90 flex h-10 items-center justify-center rounded-md px-8 text-sm font-bold shadow-sm transition-all hover:scale-[1.02] md:h-12 md:text-base">
-                                                Play Now
-                                            </Button>
+                                            {@const itemStatus = statusEntries[item.id]}
+                                            {@const resolved = resolvedEntries[item.id]}
+                                            {#if itemStatus?.status === "found" && itemStatus.state === "Completed"}
+                                                <Button
+                                                    variant="default"
+                                                    size="lg"
+                                                    disabled={deepLinkLoadingId === item.id}
+                                                    onclick={() => playNow(item.id, itemStatus.id)}
+                                                    class="bg-primary text-primary-foreground hover:bg-primary/90 flex h-10 items-center justify-center rounded-md px-8 text-sm font-bold shadow-sm transition-all hover:scale-[1.02] md:h-12 md:text-base">
+                                                    {#if deepLinkLoadingId === item.id}
+                                                        <LoaderCircle
+                                                            class="mr-2 h-4 w-4 animate-spin" />
+                                                    {/if}
+                                                    Play Now
+                                                </Button>
+                                            {:else if itemStatus?.status === "not_found" && resolved && resolved !== "pending"}
+                                                <ItemRequest
+                                                    title={displayTitle}
+                                                    ids={[]}
+                                                    {mediaType}
+                                                    externalId={resolved.id}
+                                                    variant="default"
+                                                    size="lg"
+                                                    class="bg-primary text-primary-foreground hover:bg-primary/90 flex h-10 items-center justify-center rounded-md px-8 text-sm font-bold shadow-sm transition-all hover:scale-[1.02] md:h-12 md:text-base"
+                                                    onSuccess={(itemId) => {
+                                                        if (itemId != null) {
+                                                            markLibraryStatusRequested(
+                                                                resolved.indexer,
+                                                                resolved.id,
+                                                                itemId
+                                                            );
+                                                        }
+                                                    }}>
+                                                    Request
+                                                </ItemRequest>
+                                            {/if}
                                         {/if}
                                         <Button
                                             variant="secondary"

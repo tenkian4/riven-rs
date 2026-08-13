@@ -1437,6 +1437,15 @@ type QueryRoot {
 	"""
 	activePlaybackSessions: [ActivePlaybackSession!]!
 	"""
+	The media server's own page for a completed item, for a "Play Now"
+	button — resolved live, on demand, rather than stored: nothing in
+	riven tracks a media server's internal item id today, and doing that
+	lookup only on the rare click a card actually gets (instead of for
+	every card a carousel renders) keeps this off the hot path entirely.
+	`None` if no configured media-server plugin could find a match.
+	"""
+	mediaServerDeepLink(mediaItemId: Int!): String
+	"""
 	Get upcoming unreleased items (calendar feed), with show title resolved in a single query.
 	"""
 	calendar(limit: Int): [CalendarEntry!]!

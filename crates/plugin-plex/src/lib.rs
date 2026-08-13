@@ -15,10 +15,11 @@ mod client;
 mod paths;
 
 use client::{
-    PlexSection, get_active_sessions, get_artwork, get_library_sections, refresh_section,
+    PlexSection, find_rating_key_by_guid, get_active_sessions, get_artwork, get_library_sections,
+    get_machine_identifier, refresh_section, urlencoding,
 };
 #[cfg(test)]
-use client::{map_playback_method, map_playback_state, urlencoding};
+use client::{map_playback_method, map_playback_state};
 use paths::{effective_library_path, entry_vfs_dirs, load_filesystem_settings};
 
 const SECTIONS_CACHE_TTL: Duration = Duration::from_secs(300);
@@ -52,6 +53,7 @@ impl Plugin for PlexPlugin {
             EventType::MediaItemDownloadSuccess,
             EventType::ActivePlaybackSessionsRequested,
             EventType::ArtworkRequested,
+            EventType::MediaServerDeepLinkRequested,
         ]
     }
 
@@ -198,6 +200,49 @@ impl Plugin for PlexPlugin {
         Ok(HookResponse::Artwork(
             get_artwork(&ctx.http, plex_url, plex_token, reference).await?,
         ))
+    }
+
+    async fn on_media_server_deep_link_requested(
+        &self,
+        _item_type: riven_core::types::MediaItemType,
+        tmdb_id: Option<&str>,
+        tvdb_id: Option<&str>,
+        imdb_id: Option<&str>,
+        ctx: &PluginContext,
+    ) -> anyhow::Result<HookResponse> {
+        let plex_token = ctx.require_setting("plextoken")?;
+        let plex_url = ctx.require_setting("plexserverurl")?.trim_end_matches('/');
+
+        // Movies are agent-matched by TMDB id, shows by TVDB, same as riven's
+        // own library — tried in that order, with IMDB as a last resort for
+        // whichever content a Plex agent happened to key by it instead.
+        let guids: Vec<String> = [
+            tmdb_id.map(|id| format!("tmdb://{id}")),
+            tvdb_id.map(|id| format!("tvdb://{id}")),
+            imdb_id.map(|id| format!("imdb://{id}")),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        if guids.is_empty() {
+            return Ok(HookResponse::Empty);
+        }
+
+        let Some(rating_key) =
+            find_rating_key_by_guid(&ctx.http, plex_url, plex_token, &guids).await?
+        else {
+            return Ok(HookResponse::Empty);
+        };
+        let machine_identifier = get_machine_identifier(&ctx.http, plex_url, plex_token).await?;
+
+        // The web-app link, not the native `plex://` URI scheme: the app's
+        // deep-link format has changed across Plex versions, and this one is
+        // documented and stable — it opens in the browser, which then offers
+        // to hand off to the desktop/mobile app if installed.
+        let key = urlencoding::encode_query_value(&format!("/library/metadata/{rating_key}"));
+        Ok(HookResponse::MediaServerDeepLink(format!(
+            "https://app.plex.tv/desktop/#!/server/{machine_identifier}/details?key={key}"
+        )))
     }
 }
 

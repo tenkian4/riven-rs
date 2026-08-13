@@ -3,14 +3,21 @@
     import ItemRequest from "$lib/components/media/riven/item-request.svelte";
     import StatusBadge from "$lib/components/media/status-badge.svelte";
     import { Badge } from "$lib/components/ui/badge/index.js";
+    import { Button } from "$lib/components/ui/button/index.js";
     import { cn } from "$lib/utils";
     import { resolve } from "$app/paths";
+    import { gqlClient } from "$lib/graphql-client";
+    import { toast } from "svelte-sonner";
+    import { createScopedLogger } from "$lib/logger";
+    import { LoaderCircle } from "@lucide/svelte";
     import {
         getLibraryStatus,
         markLibraryStatusRequested,
         getResolvedLibraryId,
         watchLibraryStatus
     } from "$lib/stores/library-status.svelte";
+
+    const logger = createScopedLogger("list-item");
 
     const badgeVariantClasses: Record<string, string> = {
         success: "bg-green-600/90 text-white border-0",
@@ -154,6 +161,28 @@
         return watchLibraryStatus(requestSource, requestExternalId, requestMediaType);
     });
 
+    let deepLinkLoading = $state(false);
+
+    async function playNow(mediaItemId: number) {
+        deepLinkLoading = true;
+        try {
+            const result = await gqlClient<{ mediaServerDeepLink: string | null }>(
+                `query MediaServerDeepLink($id: Int!) { mediaServerDeepLink(mediaItemId: $id) }`,
+                { id: mediaItemId }
+            );
+            if (result.mediaServerDeepLink) {
+                window.open(result.mediaServerDeepLink, "_blank", "noopener,noreferrer");
+            } else {
+                toast.error("Couldn't find this in your media server yet.");
+            }
+        } catch (e) {
+            logger.error("Failed to resolve media server deep link", e);
+            toast.error("Couldn't open in your media server.");
+        } finally {
+            deepLinkLoading = false;
+        }
+    }
+
     // The footer's Request button/status pill lives inside the card's own <a>
     // (so it stays visually anchored to the poster), so a click on it would
     // otherwise also navigate to the details page. Rather than attach a click
@@ -220,6 +249,21 @@
                     <span
                         class="inline-flex h-6 w-20 animate-pulse rounded-full bg-white/10 backdrop-blur-md"
                         aria-hidden="true"></span>
+                {:else if statusEntry.status === "found" && statusEntry.state === "Completed"}
+                    {@const mediaItemId = statusEntry.id}
+                    <div data-card-footer-action>
+                        <Button
+                            size="sm"
+                            variant="default"
+                            disabled={deepLinkLoading}
+                            onclick={() => playNow(mediaItemId)}
+                            class="h-6 rounded-full px-3 text-[10px] font-semibold shadow-sm backdrop-blur-md">
+                            {#if deepLinkLoading}
+                                <LoaderCircle class="mr-1 h-3 w-3 animate-spin" />
+                            {/if}
+                            Play Now
+                        </Button>
+                    </div>
                 {:else if statusEntry.status === "not_found"}
                     <div data-card-footer-action>
                         <ItemRequest

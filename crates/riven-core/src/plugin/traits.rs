@@ -186,6 +186,22 @@ pub trait Plugin: Send + Sync + 'static {
         Ok(HookResponse::Empty)
     }
 
+    /// Resolve this media server's own page for an item, if it has one.
+    ///
+    /// Every subscribed plugin gets a chance to answer; the default is
+    /// `Empty`, so a plugin that is not a media server (or could not find a
+    /// match) simply declines.
+    async fn on_media_server_deep_link_requested(
+        &self,
+        _item_type: crate::types::MediaItemType,
+        _tmdb_id: Option<&str>,
+        _tvdb_id: Option<&str>,
+        _imdb_id: Option<&str>,
+        _ctx: &PluginContext,
+    ) -> anyhow::Result<HookResponse> {
+        Ok(HookResponse::Empty)
+    }
+
     /// Default dispatcher — do not override. Routes a `RivenEvent` to the matching `on_*` hook.
     async fn handle_event(
         &self,
@@ -319,6 +335,21 @@ pub trait Plugin: Send + Sync + 'static {
             }
             RivenEvent::ArtworkRequested { server, reference } => {
                 self.on_artwork_requested(server, reference, ctx).await
+            }
+            RivenEvent::MediaServerDeepLinkRequested {
+                item_type,
+                tmdb_id,
+                tvdb_id,
+                imdb_id,
+            } => {
+                self.on_media_server_deep_link_requested(
+                    *item_type,
+                    tmdb_id.as_deref(),
+                    tvdb_id.as_deref(),
+                    imdb_id.as_deref(),
+                    ctx,
+                )
+                .await
             }
         }
     }

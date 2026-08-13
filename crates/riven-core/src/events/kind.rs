@@ -74,6 +74,8 @@ pub enum EventType {
     ActivePlaybackSessionsRequested,
     #[serde(rename = "riven.media-server.artwork.requested")]
     ArtworkRequested,
+    #[serde(rename = "riven.media-server.deep-link.requested")]
+    MediaServerDeepLinkRequested,
 }
 
 impl EventType {
@@ -119,6 +121,7 @@ impl EventType {
             Self::DebridUserInfoRequested => "riven.debrid.user-info.requested",
             Self::ActivePlaybackSessionsRequested => "riven.media-server.active-sessions.requested",
             Self::ArtworkRequested => "riven.media-server.artwork.requested",
+            Self::MediaServerDeepLinkRequested => "riven.media-server.deep-link.requested",
         }
     }
 
@@ -176,7 +179,9 @@ impl EventType {
             | Self::DebridUserInfoRequested
             // Serves one browser request; the caller needs the bytes back, so
             // it cannot be queued.
-            | Self::ArtworkRequested => Inline,
+            | Self::ArtworkRequested
+            // Only fired on a "Play Now" click, in-process — same reasoning.
+            | Self::MediaServerDeepLinkRequested => Inline,
 
             Self::MediaItemScrapeRequested | Self::MediaItemIndexRequested
             | Self::ContentServiceRequested => FanIn,
@@ -237,6 +242,7 @@ mod tests {
             DebridUserInfoRequested,
             ActivePlaybackSessionsRequested,
             ArtworkRequested,
+            MediaServerDeepLinkRequested,
         ];
         for variant in all {
             match variant {
@@ -265,7 +271,8 @@ mod tests {
                 | MediaItemsDeleted
                 | DebridUserInfoRequested
                 | ActivePlaybackSessionsRequested
-                | ArtworkRequested => {}
+                | ArtworkRequested
+                | MediaServerDeepLinkRequested => {}
             }
         }
         all.to_vec()
