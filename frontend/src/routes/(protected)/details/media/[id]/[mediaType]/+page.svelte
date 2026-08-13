@@ -17,6 +17,7 @@
     import Search from "@lucide/svelte/icons/search";
     import Pause from "@lucide/svelte/icons/pause";
     import Download from "@lucide/svelte/icons/download";
+    import LoaderCircle from "@lucide/svelte/icons/loader-circle";
     import { cn } from "$lib/utils";
     import PortraitCard from "$lib/components/media/portrait-card.svelte";
     import ListItem from "$lib/components/list-item.svelte";
@@ -199,6 +200,27 @@
         }
 
         return resolutionLabel ?? profileLabel ?? fallback;
+    }
+
+    let deepLinkLoading = $state(false);
+
+    async function playNow(mediaItemId: number) {
+        deepLinkLoading = true;
+        try {
+            const result = await gqlClient<{ mediaServerDeepLink: string | null }>(
+                `query MediaServerDeepLink($id: Int!) { mediaServerDeepLink(mediaItemId: $id) }`,
+                { id: mediaItemId }
+            );
+            if (result.mediaServerDeepLink) {
+                window.open(result.mediaServerDeepLink, "_blank", "noopener,noreferrer");
+            } else {
+                toast.error("Couldn't find this in your media server yet.");
+            }
+        } catch {
+            toast.error("Couldn't open in your media server.");
+        } finally {
+            deepLinkLoading = false;
+        }
     }
 
     async function deleteFilesystemEntry(id: number, label: string) {
@@ -893,6 +915,21 @@
                                 </ItemManualScrape>
                             {/if}
                             {#if riven?.id != null}
+                                {#if riven.state === "Completed"}
+                                    <Button
+                                        size="default"
+                                        variant="default"
+                                        disabled={deepLinkLoading}
+                                        onclick={() => playNow(riven.id)}
+                                        class="px-4">
+                                        {#if deepLinkLoading}
+                                            <LoaderCircle class="mr-1.5 h-4 w-4 animate-spin" />
+                                        {:else}
+                                            <Play class="mr-1.5 h-4 w-4" />
+                                        {/if}
+                                        Play Now
+                                    </Button>
+                                {/if}
                                 <ItemAction
                                     kind="reset"
                                     size="default"
