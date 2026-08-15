@@ -380,7 +380,8 @@
         {/each}
     </section>
 
-    <section class="border-border/60 bg-card/30 overflow-hidden rounded-md border">
+    <section
+        class="border-border/60 bg-card/30 min-h-0 flex-1 overflow-y-auto rounded-md border">
         <div class="p-2 md:p-3">
             {#if isMobile.current}
                 {#if visibleMonthDays.length > 0}
