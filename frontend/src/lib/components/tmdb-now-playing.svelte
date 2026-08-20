@@ -415,7 +415,7 @@
                                         {#if showRequestButton}
                                             {@const itemStatus = statusEntries[item.id]}
                                             {@const resolved = resolvedEntries[item.id]}
-                                            {#if itemStatus?.status === "found" && itemStatus.state === "Completed"}
+                                            {#if itemStatus?.status === "found" && (itemStatus.state === "Completed" || itemStatus.state === "Ongoing" || itemStatus.state === "PartiallyCompleted")}
                                                 <Button
                                                     variant="default"
                                                     size="lg"
