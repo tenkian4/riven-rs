@@ -76,10 +76,18 @@
     function toggleAutoplay() {
         const autoplay = api?.plugins()?.autoplay;
         if (!autoplay) return;
+        // Set isPlaying directly rather than relying on the autoplay:play/stop
+        // events to sync it: embla-carousel-autoplay emits those events before
+        // updating its own internal isPlaying() flag, so reading it inside the
+        // event handler returns the pre-toggle value and gets the button stuck
+        // showing the wrong icon (and the progress bar looking frozen) after a
+        // manual toggle, even though the underlying timer did restart/stop.
         if (autoplay.isPlaying()) {
             autoplay.stop();
+            isPlaying = false;
         } else {
             autoplay.play();
+            isPlaying = true;
         }
     }
 
