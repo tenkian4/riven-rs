@@ -915,7 +915,7 @@
                                 </ItemManualScrape>
                             {/if}
                             {#if riven?.id != null}
-                                {#if riven.state === "Completed"}
+                                {#if riven.state === "Completed" || riven.state === "Ongoing" || riven.state === "PartiallyCompleted"}
                                     <Button
                                         size="default"
                                         variant="default"
