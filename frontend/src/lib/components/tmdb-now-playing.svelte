@@ -9,7 +9,7 @@
     import { Button } from "$lib/components/ui/button/index.js";
     import { Skeleton } from "$lib/components/ui/skeleton/index.js";
     import { getRatings } from "$lib/stores/ratings";
-    import { ChevronLeft, ChevronRight, Star, LoaderCircle } from "@lucide/svelte";
+    import { ChevronLeft, ChevronRight, Star, LoaderCircle, Pause, Play } from "@lucide/svelte";
     import ItemRequest from "$lib/components/media/riven/item-request.svelte";
     import {
         getLibraryStatus,
@@ -37,6 +37,7 @@
 
     let api = $state<CarouselAPI>();
     let currentIndex = $state(0);
+    let isPlaying = $state(true);
     let logos = $state<Record<number, string | null>>({});
     let ratings = $state<
         Record<
@@ -67,13 +68,17 @@
     });
 
     // Autoplay: advance 5s after every slide change (restarts on manual navigation,
-    // in step with the 5s progress animation).
+    // in step with the 5s progress animation). Paused via the toggle button.
     $effect(() => {
-        if (!api) return;
+        if (!api || !isPlaying) return;
         void currentIndex;
         const timer = setTimeout(() => api?.scrollNext(), 5000);
         return () => clearTimeout(timer);
     });
+
+    function toggleAutoplay() {
+        isPlaying = !isPlaying;
+    }
 
     async function loadItemData(item: TmdbListItem) {
         // Fetch Ratings (independent of logo)
@@ -452,6 +457,17 @@
         <!-- Progress Indicator -->
         <div
             class="absolute bottom-4 left-1/2 z-20 flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-4 rounded-full border border-white/10 bg-black/30 px-4 py-2 backdrop-blur-xl md:px-6 md:py-2.5">
+            <button type="button"
+                class="flex h-4 w-4 shrink-0 items-center justify-center text-white/90 transition-colors hover:text-white"
+                onclick={toggleAutoplay}
+                title={isPlaying ? "Pause" : "Play"}
+                aria-label={isPlaying ? "Pause carousel autoplay" : "Resume carousel autoplay"}>
+                {#if isPlaying}
+                    <Pause class="h-3.5 w-3.5 fill-current" />
+                {:else}
+                    <Play class="h-3.5 w-3.5 fill-current" />
+                {/if}
+            </button>
             <span class="font-mono text-xs font-medium whitespace-nowrap text-white/90"
                 >{currentIndex + 1} / {data.length}</span>
 
@@ -466,7 +482,9 @@
                         onclick={() => api?.scrollTo(i)}
                         aria-label="Go to slide {i + 1}">
                         {#if i === currentIndex}
-                            <div class="animate-progress bg-primary absolute top-0 bottom-0 left-0">
+                            <div
+                                class="animate-progress bg-primary absolute top-0 bottom-0 left-0"
+                                style="animation-play-state: {isPlaying ? 'running' : 'paused'};">
                             </div>
                         {/if}
                     </button>
