@@ -108,6 +108,74 @@ pub(crate) async fn get_artwork(
     })
 }
 
+/// Find an item's `ratingKey` by title and release year, searching every
+/// configured library at once.
+///
+/// Not a `guid` lookup: Plex's `/library/all?guid=` filter only matches an
+/// item's own *primary* guid, which on every modern ("new agent") Plex
+/// library is Plex's own opaque identifier (`plex://movie/...`), not the
+/// external id — those live in a separate `Guid[]` array the filter does not
+/// search at all. Confirmed live against a real Plex 1.43 server: a movie
+/// with a correct `tmdb://...` entry in its `Guid[]` still returns zero
+/// results from `?guid=tmdb://...`. Title+year is Plex's own fallback for
+/// exactly this case (its "Match" UI works the same way) — fast, but not a
+/// guaranteed-exact match, since a same-titled remake/reboot with the same
+/// release year would collide.
+pub(crate) async fn find_rating_key_by_title_year(
+    http: &riven_core::http::HttpClient,
+    plex_url: &str,
+    token: &str,
+    title: &str,
+    year: Option<i32>,
+    plex_type: u8,
+) -> anyhow::Result<Option<String>> {
+    let url = format!("{plex_url}/library/all");
+    tracing::debug!(target_url = %url, title, ?year, "searching plex library by title/year");
+    let year_str = year.map(|y| y.to_string());
+    let mut query = vec![
+        ("title", title),
+        ("type", if plex_type == 1 { "1" } else { "2" }),
+    ];
+    if let Some(ref y) = year_str {
+        query.push(("year", y.as_str()));
+    }
+    let resp: PlexSectionsAllResponse = http
+        .get_json(PROFILE, url.clone(), |client| {
+            client
+                .get(&url)
+                .query(&query)
+                .header("x-plex-token", token)
+                .header("accept", "application/json")
+        })
+        .await?;
+    Ok(resp
+        .media_container
+        .metadata
+        .into_iter()
+        .next()
+        .map(|item| item.rating_key))
+}
+
+/// The server's own persistent identity, needed to build a deep link — Plex's
+/// web app addresses a server by this id, not by its (possibly-changing) URL.
+pub(crate) async fn get_machine_identifier(
+    http: &riven_core::http::HttpClient,
+    plex_url: &str,
+    token: &str,
+) -> anyhow::Result<String> {
+    let url = format!("{plex_url}/identity");
+    tracing::debug!(target_url = %url, "fetching plex server identity");
+    let resp: PlexIdentityResponse = http
+        .get_json(PROFILE, url.clone(), |client| {
+            client
+                .get(&url)
+                .header("x-plex-token", token)
+                .header("accept", "application/json")
+        })
+        .await?;
+    Ok(resp.media_container.machine_identifier)
+}
+
 pub(crate) async fn get_active_sessions(
     http: &riven_core::http::HttpClient,
     plex_url: &str,
@@ -205,6 +273,36 @@ struct PlexSectionsResponse {
 }
 
 #[derive(Deserialize)]
+struct PlexSectionsAllResponse {
+    #[serde(rename = "MediaContainer")]
+    media_container: PlexAllMediaContainer,
+}
+
+#[derive(Deserialize)]
+struct PlexAllMediaContainer {
+    #[serde(rename = "Metadata", default)]
+    metadata: Vec<PlexAllMetadata>,
+}
+
+#[derive(Deserialize)]
+struct PlexAllMetadata {
+    #[serde(rename = "ratingKey")]
+    rating_key: String,
+}
+
+#[derive(Deserialize)]
+struct PlexIdentityResponse {
+    #[serde(rename = "MediaContainer")]
+    media_container: PlexIdentityContainer,
+}
+
+#[derive(Deserialize)]
+struct PlexIdentityContainer {
+    #[serde(rename = "machineIdentifier")]
+    machine_identifier: String,
+}
+
+#[derive(Deserialize)]
 struct PlexMediaContainer {
     #[serde(rename = "Directory", default)]
     directory: Vec<PlexSection>,
@@ -269,11 +367,34 @@ struct PlexUser {
 }
 
 pub(crate) mod urlencoding {
+    /// Path-segment encoding: `/` is left alone since it is a separator, not
+    /// data, in every caller of this function (all of them build a `?path=`
+    /// query value that is itself a filesystem path Plex echoes back as-is).
     pub(crate) fn encode(s: &str) -> String {
         let mut result = String::new();
         for c in s.chars() {
             match c {
                 'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '.' | '~' | '/' => result.push(c),
+                _ => {
+                    for b in c.to_string().as_bytes() {
+                        result.push_str(&format!("%{b:02X}"));
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    /// Full query-value encoding, `/` included — for a value that is not
+    /// itself a path being handed straight to a `path=`-style param, but
+    /// arbitrary data embedded in a query string (Plex's web-app deep link
+    /// embeds a `/library/metadata/...` path as the *value* of `key=`, where
+    /// an unescaped `/` would be read as part of the URL's own structure).
+    pub(crate) fn encode_query_value(s: &str) -> String {
+        let mut result = String::new();
+        for c in s.chars() {
+            match c {
+                'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '.' | '~' => result.push(c),
                 _ => {
                     for b in c.to_string().as_bytes() {
                         result.push_str(&format!("%{b:02X}"));

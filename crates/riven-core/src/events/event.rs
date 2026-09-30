@@ -197,6 +197,24 @@ pub enum RivenEvent {
     /// `plugin_notifications`'s own movie/show split).
     #[serde(rename = "riven.notifications.test-requested")]
     NotificationTestRequested { item_type: MediaItemType },
+    /// A user clicked "Play Now" on a completed item. Every media-server
+    /// plugin gets a chance to resolve its own deep link; the first `Some`
+    /// wins, so an instance with more than one configured server picks
+    /// whichever answers first rather than something the caller controls.
+    ///
+    /// `title`/`year` exist alongside the external ids because Plex has no
+    /// server-side filter over the external-id `Guid[]` array modern agents
+    /// use — only its own opaque primary guid — so a Plex-backed instance
+    /// falls back to a title/year text search instead.
+    #[serde(rename = "riven.media-server.deep-link.requested")]
+    MediaServerDeepLinkRequested {
+        item_type: MediaItemType,
+        title: String,
+        year: Option<i32>,
+        tmdb_id: Option<String>,
+        tvdb_id: Option<String>,
+        imdb_id: Option<String>,
+    },
 }
 
 impl RivenEvent {
@@ -267,6 +285,7 @@ impl RivenEvent {
             Self::ActivePlaybackSessionsRequested => EventType::ActivePlaybackSessionsRequested,
             Self::ArtworkRequested { .. } => EventType::ArtworkRequested,
             Self::NotificationTestRequested { .. } => EventType::NotificationTestRequested,
+            Self::MediaServerDeepLinkRequested { .. } => EventType::MediaServerDeepLinkRequested,
         }
     }
 }

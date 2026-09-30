@@ -202,6 +202,7 @@ impl Plugin for MediaServerPlugin {
             EventType::MediaItemsDeleted,
             EventType::ActivePlaybackSessionsRequested,
             EventType::ArtworkRequested,
+            EventType::MediaServerDeepLinkRequested,
         ]
     }
 
@@ -257,6 +258,23 @@ impl Plugin for MediaServerPlugin {
         ctx: &PluginContext,
     ) -> anyhow::Result<HookResponse> {
         notify_items_deleted(self.name, deleted_paths, ctx).await
+    }
+
+    async fn on_media_server_deep_link_requested(
+        &self,
+        _item_type: riven_core::types::MediaItemType,
+        _title: &str,
+        _year: Option<i32>,
+        tmdb_id: Option<&str>,
+        tvdb_id: Option<&str>,
+        imdb_id: Option<&str>,
+        ctx: &PluginContext,
+    ) -> anyhow::Result<HookResponse> {
+        let (url, api_key) = creds(ctx)?;
+        match find_deep_link(&ctx.http, &url, api_key, self.name, tmdb_id, tvdb_id, imdb_id).await? {
+            Some(link) => Ok(HookResponse::MediaServerDeepLink(link)),
+            None => Ok(HookResponse::Empty),
+        }
     }
 }
 
@@ -380,6 +398,71 @@ async fn get_active_sessions(
             })
         })
         .collect())
+}
+
+/// Find an item's own id by external id, trying each provider in turn —
+/// tmdb before tvdb/imdb, matching riven's own movies-by-tmdb/shows-by-tvdb
+/// convention — and build the server's web-app link for it.
+///
+/// Best-effort: Jellyfin's and Emby's web routes have diverged since the
+/// fork (`#!/details?id=` vs `#!/item?id=`, plus version drift within each),
+/// and this could not be verified against a real Emby/Jellyfin instance —
+/// only against Plex. If a link lands on the wrong route, that's the first
+/// thing to check.
+async fn find_deep_link(
+    http: &riven_core::http::HttpClient,
+    base_url: &str,
+    api_key: &str,
+    server: &'static str,
+    tmdb_id: Option<&str>,
+    tvdb_id: Option<&str>,
+    imdb_id: Option<&str>,
+) -> anyhow::Result<Option<String>> {
+    let providers: Vec<(&str, &str)> = [
+        tmdb_id.map(|id| ("Tmdb", id)),
+        tvdb_id.map(|id| ("Tvdb", id)),
+        imdb_id.map(|id| ("Imdb", id)),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+
+    for (provider, id) in providers {
+        let url = format!("{base_url}/Items");
+        let provider_filter = format!("{provider}.{id}");
+        tracing::debug!(server, target_url = %url, provider, id, "searching media server by provider id");
+        let resp: MediaServerItemsResponse = http
+            .get_json(server_profile(server), url.clone(), |client| {
+                media_server_request(client, Method::GET, &url, api_key, server).query(&[
+                    ("Recursive", "true"),
+                    ("IncludeItemTypes", "Movie,Series"),
+                    ("AnyProviderIdEquals", provider_filter.as_str()),
+                    ("Limit", "1"),
+                ])
+            })
+            .await?;
+        if let Some(item) = resp.items.into_iter().next() {
+            let route = if server == "emby" { "item" } else { "details" };
+            return Ok(Some(format!(
+                "{}/web/index.html#!/{route}?id={}",
+                base_url.trim_end_matches('/'),
+                item.id
+            )));
+        }
+    }
+    Ok(None)
+}
+
+#[derive(Deserialize)]
+struct MediaServerItemsResponse {
+    #[serde(rename = "Items", default)]
+    items: Vec<MediaServerItemSummary>,
+}
+
+#[derive(Deserialize)]
+struct MediaServerItemSummary {
+    #[serde(rename = "Id")]
+    id: String,
 }
 
 fn map_media_server_playback_state(play_state: &MediaServerPlayState) -> PlaybackState {

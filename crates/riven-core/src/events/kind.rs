@@ -76,6 +76,8 @@ pub enum EventType {
     ArtworkRequested,
     #[serde(rename = "riven.notifications.test-requested")]
     NotificationTestRequested,
+    #[serde(rename = "riven.media-server.deep-link.requested")]
+    MediaServerDeepLinkRequested,
 }
 
 impl EventType {
@@ -122,6 +124,7 @@ impl EventType {
             Self::ActivePlaybackSessionsRequested => "riven.media-server.active-sessions.requested",
             Self::ArtworkRequested => "riven.media-server.artwork.requested",
             Self::NotificationTestRequested => "riven.notifications.test-requested",
+            Self::MediaServerDeepLinkRequested => "riven.media-server.deep-link.requested",
         }
     }
 
@@ -167,7 +170,9 @@ impl EventType {
             | Self::ArtworkRequested
             // The GraphQL mutation needs the send result in-process to
             // report success/failure back to the caller.
-            | Self::NotificationTestRequested => Inline,
+            | Self::NotificationTestRequested
+            // Only fired on a "Play Now" click, in-process — same reasoning.
+            | Self::MediaServerDeepLinkRequested => Inline,
 
             Self::MediaItemScrapeRequested | Self::MediaItemIndexRequested
             | Self::ContentServiceRequested => FanIn,
