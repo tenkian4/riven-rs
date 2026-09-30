@@ -166,6 +166,7 @@ fn ids_to_external(ids: &TraktIds) -> Option<ExternalIds> {
         imdb_id: ids.imdb.clone(),
         tmdb_id: ids.tmdb.map(|n| n.to_string()),
         tvdb_id: ids.tvdb.map(|n| n.to_string()),
+        requested_by: Some("Trakt".to_string()),
         ..Default::default()
     })
 }

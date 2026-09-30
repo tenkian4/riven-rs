@@ -5,6 +5,7 @@ use plugin_dashboard::DashboardQuery;
 use riven_core::http::HttpClient;
 use riven_core::logging::LogControl;
 use riven_core::plugin::PluginRegistry;
+use sea_orm::DatabaseConnection;
 use std::sync::Arc;
 
 pub(crate) mod auth;
@@ -40,6 +41,7 @@ impl StremioAddonToken {
 pub fn build_schema(
     registry: Arc<PluginRegistry>,
     job_queue: Arc<riven_queue::JobQueue>,
+    db: DatabaseConnection,
     http_client: HttpClient,
     log_directory: String,
     log_control: Arc<LogControl>,
@@ -54,6 +56,7 @@ pub fn build_schema(
     )
     .data(registry)
     .data(job_queue)
+    .data(db)
     .data(http_client)
     .data(log_control)
     .data(log_tx)
