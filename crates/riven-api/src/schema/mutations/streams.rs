@@ -388,6 +388,7 @@ impl StreamsMutations {
             .push_rank_streams(RankStreamsJob {
                 id: target.id,
                 preferred_info_hash: Some(info_hash),
+                preferred_profile_name: None,
             })
             .await;
 
@@ -471,7 +472,12 @@ impl StreamsMutations {
         let file_size_bytes = document.as_ref().map(|doc| {
             doc.files
                 .iter()
-                .map(|file| file.segments.total_bytes())
+                .map(|file| {
+                    file.segments
+                        .iter()
+                        .map(|segment| segment.bytes)
+                        .sum::<u64>()
+                })
                 .sum::<u64>() as i64
         });
         let parsed = riven_rank::parse(&title);

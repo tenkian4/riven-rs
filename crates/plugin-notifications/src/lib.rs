@@ -178,10 +178,10 @@ impl Plugin for NotificationsPlugin {
         // preview (which doesn't consult this at all) would show them
         // populated.
         let (use_custom_key, _, _) = template_keys(template_category(payload.item_type));
-        if detailed || ctx.settings.get_bool(use_custom_key) {
-            if let Some(api_key) = ctx.settings.get("tmdb_api_key") {
-                payload.overview = fetch_tmdb_overview(&ctx.http, api_key, &payload).await;
-            }
+        if (detailed || ctx.settings.get_bool(use_custom_key))
+            && let Some(api_key) = ctx.settings.get("tmdb_api_key")
+        {
+            payload.overview = fetch_tmdb_overview(&ctx.http, api_key, &payload).await;
         }
 
         // The release behind this download — quality/resolution/group come

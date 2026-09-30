@@ -271,7 +271,11 @@ impl Plugin for MediaServerPlugin {
         ctx: &PluginContext,
     ) -> anyhow::Result<HookResponse> {
         let (url, api_key) = creds(ctx)?;
-        match find_deep_link(&ctx.http, &url, api_key, self.name, tmdb_id, tvdb_id, imdb_id).await? {
+        match find_deep_link(
+            &ctx.http, &url, api_key, self.name, tmdb_id, tvdb_id, imdb_id,
+        )
+        .await?
+        {
             Some(link) => Ok(HookResponse::MediaServerDeepLink(link)),
             None => Ok(HookResponse::Empty),
         }

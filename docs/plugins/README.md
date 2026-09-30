@@ -80,7 +80,7 @@ is not optional.
 | [listrr](listrr.md) | 3 | `apikey` |
 | [mdblist](mdblist.md) | 2 | `apikey` |
 | [subdl](subdl.md) | 2 | `apikey` |
-| [notifications](notifications.md) | 3 | `urls` |
+| [notifications](notifications.md) | 9 | `urls` |
 | [webhooks](webhooks.md) | 4 | `urls` |
 | [trakt](trakt.md) | 11 | `clientid` |
 

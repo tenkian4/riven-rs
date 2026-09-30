@@ -145,7 +145,6 @@ mod tests {
         ("downloadExplicitNzb", "ScrapeItems"),
         ("previewManualMagnet", "ScrapeItems"),
         ("previewManualNzb", "ScrapeItems"),
-        ("saveStreamUrl", "ScrapeItems"),
         ("rescanUsenetHealth", "ScrapeItems"),
         // Deletes *and* re-scrapes, so it requires both.
         ("regrabUsenetTitle", "DeleteItems+ScrapeItems"),

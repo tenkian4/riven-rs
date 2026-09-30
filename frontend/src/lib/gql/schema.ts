@@ -174,6 +174,13 @@ export type DiscoveredStream = {
 export type EpisodeFull = {
   absoluteNumber?: Maybe<Scalars['Int']['output']>;
   activeStreamId?: Maybe<Scalars['Int']['output']>;
+  /**
+   * Who is responsible for this item existing, for display next to other
+   * item metadata. See [`super::item_requests::resolve_added_by`] for the
+   * full rules — `None` only for an item with no linked request at all
+   * (e.g. `discoverItem`, which never creates one).
+   */
+  addedBy?: Maybe<Scalars['String']['output']>;
   airedAt?: Maybe<Scalars['NaiveDate']['output']>;
   airedAtUtc?: Maybe<Scalars['DateTime']['output']>;
   aliases?: Maybe<Scalars['JSON']['output']>;
@@ -196,6 +203,13 @@ export type EpisodeFull = {
   itemType: MediaItemType;
   language?: Maybe<Scalars['String']['output']>;
   lastScrapeAttemptAt?: Maybe<Scalars['DateTime']['output']>;
+  /**
+   * Set once a Manual Scrape (a picked discovery result, a pasted
+   * magnet/hash, or a pasted NZB URL) resolves this item. Opts it out of
+   * `get_pending_items_for_retry`'s automatic re-scrape loop, since the
+   * user has already made the pick that loop exists to make on its own.
+   */
+  manualScrapeOnly: Scalars['Boolean']['output'];
   network?: Maybe<Scalars['String']['output']>;
   networkTimezone?: Maybe<Scalars['String']['output']>;
   parentId?: Maybe<Scalars['Int']['output']>;
@@ -456,6 +470,13 @@ export type MediaDetails = {
 export type MediaItem = {
   absoluteNumber?: Maybe<Scalars['Int']['output']>;
   activeStreamId?: Maybe<Scalars['Int']['output']>;
+  /**
+   * Who is responsible for this item existing, for display next to other
+   * item metadata. See [`super::item_requests::resolve_added_by`] for the
+   * full rules — `None` only for an item with no linked request at all
+   * (e.g. `discoverItem`, which never creates one).
+   */
+  addedBy?: Maybe<Scalars['String']['output']>;
   airedAt?: Maybe<Scalars['NaiveDate']['output']>;
   airedAtUtc?: Maybe<Scalars['DateTime']['output']>;
   aliases?: Maybe<Scalars['JSON']['output']>;
@@ -476,6 +497,13 @@ export type MediaItem = {
   itemType: MediaItemType;
   language?: Maybe<Scalars['String']['output']>;
   lastScrapeAttemptAt?: Maybe<Scalars['DateTime']['output']>;
+  /**
+   * Set once a Manual Scrape (a picked discovery result, a pasted
+   * magnet/hash, or a pasted NZB URL) resolves this item. Opts it out of
+   * `get_pending_items_for_retry`'s automatic re-scrape loop, since the
+   * user has already made the pick that loop exists to make on its own.
+   */
+  manualScrapeOnly: Scalars['Boolean']['output'];
   network?: Maybe<Scalars['String']['output']>;
   networkTimezone?: Maybe<Scalars['String']['output']>;
   parentId?: Maybe<Scalars['Int']['output']>;
@@ -503,6 +531,13 @@ export type MediaItem = {
 export type MediaItemFull = {
   absoluteNumber?: Maybe<Scalars['Int']['output']>;
   activeStreamId?: Maybe<Scalars['Int']['output']>;
+  /**
+   * Who is responsible for this item existing, for display next to other
+   * item metadata. See [`super::item_requests::resolve_added_by`] for the
+   * full rules — `None` only for an item with no linked request at all
+   * (e.g. `discoverItem`, which never creates one).
+   */
+  addedBy?: Maybe<Scalars['String']['output']>;
   airedAt?: Maybe<Scalars['NaiveDate']['output']>;
   airedAtUtc?: Maybe<Scalars['DateTime']['output']>;
   aliases?: Maybe<Scalars['JSON']['output']>;
@@ -525,6 +560,13 @@ export type MediaItemFull = {
   itemType: MediaItemType;
   language?: Maybe<Scalars['String']['output']>;
   lastScrapeAttemptAt?: Maybe<Scalars['DateTime']['output']>;
+  /**
+   * Set once a Manual Scrape (a picked discovery result, a pasted
+   * magnet/hash, or a pasted NZB URL) resolves this item. Opts it out of
+   * `get_pending_items_for_retry`'s automatic re-scrape loop, since the
+   * user has already made the pick that loop exists to make on its own.
+   */
+  manualScrapeOnly: Scalars['Boolean']['output'];
   network?: Maybe<Scalars['String']['output']>;
   networkTimezone?: Maybe<Scalars['String']['output']>;
   parentId?: Maybe<Scalars['Int']['output']>;
@@ -552,6 +594,13 @@ export type MediaItemFull = {
 export type MediaItemListRow = {
   absoluteNumber?: Maybe<Scalars['Int']['output']>;
   activeStreamId?: Maybe<Scalars['Int']['output']>;
+  /**
+   * Who is responsible for this item existing, for display next to other
+   * item metadata. See [`super::item_requests::resolve_added_by`] for the
+   * full rules — `None` only for an item with no linked request at all
+   * (e.g. `discoverItem`, which never creates one).
+   */
+  addedBy?: Maybe<Scalars['String']['output']>;
   airedAt?: Maybe<Scalars['NaiveDate']['output']>;
   airedAtUtc?: Maybe<Scalars['DateTime']['output']>;
   aliases?: Maybe<Scalars['JSON']['output']>;
@@ -572,6 +621,13 @@ export type MediaItemListRow = {
   itemType: MediaItemType;
   language?: Maybe<Scalars['String']['output']>;
   lastScrapeAttemptAt?: Maybe<Scalars['DateTime']['output']>;
+  /**
+   * Set once a Manual Scrape (a picked discovery result, a pasted
+   * magnet/hash, or a pasted NZB URL) resolves this item. Opts it out of
+   * `get_pending_items_for_retry`'s automatic re-scrape loop, since the
+   * user has already made the pick that loop exists to make on its own.
+   */
+  manualScrapeOnly: Scalars['Boolean']['output'];
   network?: Maybe<Scalars['String']['output']>;
   networkTimezone?: Maybe<Scalars['String']['output']>;
   parentId?: Maybe<Scalars['Int']['output']>;
@@ -616,6 +672,15 @@ export type MediaItemState =
 
 /** Lightweight media state tree used for live state subscriptions. */
 export type MediaItemStateTree = {
+  /**
+   * Mirrors `MediaItem.addedBy` — see
+   * [`riven_core::entities::item_requests::resolve_added_by`] for the
+   * full rules. Kept in sync with the full item view so this page's live
+   * state updates (which use this lightweight type, not `MediaItemFull`)
+   * don't silently drop the field once a subscription push overwrites the
+   * initial full fetch.
+   */
+  addedBy?: Maybe<Scalars['String']['output']>;
   expectedFileCount: Scalars['Int']['output'];
   id: Scalars['Int']['output'];
   imdbId?: Maybe<Scalars['String']['output']>;
@@ -725,8 +790,43 @@ export type MutationRoot = {
    * flow can fill every season it contains.
    */
   downloadDiscoveredStream: Scalars['String']['output'];
+  /**
+   * Manually queue a specific NZB by URL, bypassing indexer search entirely
+   * — the usenet equivalent of [`download_discovered_stream`]'s explicit
+   * magnet/hash field. The URL is hashed into the same `nzb-`-prefixed
+   * `info_hash` a real newznab scrape would produce and stashed in Redis
+   * under the same keys ([`nzb_url_redis_key`]), so `plugin-usenet`'s
+   * download-time fetch can't tell the difference from a scraped result.
+   *
+   * TV has no parsed release metadata to infer seasons from here (there was
+   * no scrape), so the caller must supply `season_number`/`episode_number`
+   * or `seasons` explicitly.
+   */
+  downloadExplicitNzb: Scalars['String']['output'];
   /** Pause items. */
   pauseItems: Scalars['Int']['output'];
+  /**
+   * Turns a manually-pasted magnet link/hash into a full [`DiscoveredStream`]
+   * card — same shape, same badges as a real scrape result — instead of
+   * downloading it sight-unseen. Parses whatever the magnet's own `dn=`
+   * carries through [`riven_rank::parse`] (the exact parser real scrape
+   * results go through) for resolution/quality/audio/etc., and checks
+   * debrid cache status via the same dispatch [`discover_streams`] uses.
+   * Creates or mutates nothing — the pick only becomes real when the
+   * resulting card's "Download This" calls `downloadDiscoveredStream`,
+   * same as any other result in the list.
+   */
+  previewManualMagnet: DiscoveredStream;
+  /**
+   * The NZB equivalent of [`preview_manual_magnet`]: fetches the URL
+   * (whether pasted directly or handed back by the upload endpoint),
+   * peeks its release title the same way `plugin-usenet` does at ingest
+   * time, and parses that through [`riven_rank::parse`]. Usenet has no
+   * debrid-style cache concept — every `nzb-` hash is unconditionally
+   * "cached" here, matching `plugin-usenet`'s own cache-check response.
+   * Nothing is persisted; the fetched content is discarded once peeked.
+   */
+  previewManualNzb: DiscoveredStream;
   /**
    * Re-acquire a usenet title whose release is broken (missing data) or was
    * never ingested. The item is "completed" only because it still has a
@@ -865,8 +965,38 @@ export type MutationRootDownloadDiscoveredStreamArgs = {
 };
 
 
+export type MutationRootDownloadExplicitNzbArgs = {
+  episodeNumber?: InputMaybe<Scalars['Int']['input']>;
+  imdbId?: InputMaybe<Scalars['String']['input']>;
+  itemType: MediaItemType;
+  nzbUrl: Scalars['String']['input'];
+  seasonNumber?: InputMaybe<Scalars['Int']['input']>;
+  seasons?: InputMaybe<Array<Scalars['Int']['input']>>;
+  title: Scalars['String']['input'];
+  tmdbId?: InputMaybe<Scalars['String']['input']>;
+  tvdbId?: InputMaybe<Scalars['String']['input']>;
+};
+
+
 export type MutationRootPauseItemsArgs = {
   ids: Array<Scalars['Int']['input']>;
+};
+
+
+export type MutationRootPreviewManualMagnetArgs = {
+  episodeNumber?: InputMaybe<Scalars['Int']['input']>;
+  infoHash: Scalars['String']['input'];
+  itemType: MediaItemType;
+  magnet: Scalars['String']['input'];
+  seasonNumber?: InputMaybe<Scalars['Int']['input']>;
+};
+
+
+export type MutationRootPreviewManualNzbArgs = {
+  episodeNumber?: InputMaybe<Scalars['Int']['input']>;
+  itemType: MediaItemType;
+  nzbUrl: Scalars['String']['input'];
+  seasonNumber?: InputMaybe<Scalars['Int']['input']>;
 };
 
 
@@ -1369,6 +1499,13 @@ export type RivenNotification = {
 export type SeasonFull = {
   absoluteNumber?: Maybe<Scalars['Int']['output']>;
   activeStreamId?: Maybe<Scalars['Int']['output']>;
+  /**
+   * Who is responsible for this item existing, for display next to other
+   * item metadata. See [`super::item_requests::resolve_added_by`] for the
+   * full rules — `None` only for an item with no linked request at all
+   * (e.g. `discoverItem`, which never creates one).
+   */
+  addedBy?: Maybe<Scalars['String']['output']>;
   airedAt?: Maybe<Scalars['NaiveDate']['output']>;
   airedAtUtc?: Maybe<Scalars['DateTime']['output']>;
   aliases?: Maybe<Scalars['JSON']['output']>;
@@ -1390,6 +1527,13 @@ export type SeasonFull = {
   itemType: MediaItemType;
   language?: Maybe<Scalars['String']['output']>;
   lastScrapeAttemptAt?: Maybe<Scalars['DateTime']['output']>;
+  /**
+   * Set once a Manual Scrape (a picked discovery result, a pasted
+   * magnet/hash, or a pasted NZB URL) resolves this item. Opts it out of
+   * `get_pending_items_for_retry`'s automatic re-scrape loop, since the
+   * user has already made the pick that loop exists to make on its own.
+   */
+  manualScrapeOnly: Scalars['Boolean']['output'];
   network?: Maybe<Scalars['String']['output']>;
   networkTimezone?: Maybe<Scalars['String']['output']>;
   parentId?: Maybe<Scalars['Int']['output']>;

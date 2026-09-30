@@ -22,6 +22,7 @@ it emits the raw event stream rather than one rendered message.
 Subscribes to:
 
 - `riven.media-item.download.success`
+- `riven.notifications.test-requested`
 
 ### Settings
 
@@ -29,8 +30,24 @@ Set via environment variables prefixed with `RIVEN_PLUGIN_SETTING__NOTIFICATIONS
 
 | Setting | Environment variable | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- | --- |
-| `urls` | `RIVEN_PLUGIN_SETTING__NOTIFICATIONS__urls` | text (multiline) | Yes | — | Comma-separated webhook URLs. Supports Discord and generic JSON endpoints. |
+| `urls` | `RIVEN_PLUGIN_SETTING__NOTIFICATIONS__urls` | text (multiline) | Yes | — | Comma-separated webhook URLs, using Apprise-style notation. Supports Discord (a full webhook URL or discord://id/token), Pushbullet (pbul://<access_token>), and generic JSON endpoints (json://... or jsons://...). |
 | `detailed` | `RIVEN_PLUGIN_SETTING__NOTIFICATIONS__detailed` | boolean | No | — | Show rich Discord embeds with overview, rating, and external links. |
 | `tmdb_api_key` | `RIVEN_PLUGIN_SETTING__NOTIFICATIONS__tmdb_api_key` | secret | No | — | Optional. Required for overview text in detailed Discord embeds. |
+
+#### Movie notifications
+
+| Setting | Environment variable | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `movie_use_custom_template` | `RIVEN_PLUGIN_SETTING__NOTIFICATIONS__movie_use_custom_template` | boolean | No | — | Off by default (uses the built-in layout). Switch on to apply the templates below — leaves them in place, so you can draft a template without it taking effect yet. |
+| `movie_title_template` | `RIVEN_PLUGIN_SETTING__NOTIFICATIONS__movie_title_template` | text (multiline) | No | — | Leave blank to use the default layout. Available in both movie and show templates: {{title}}, {{year}}, {{quality}}, {{resolution}}, {{release_group}}, {{downloader}}, {{provider}}, {{rating}}, {{overview}}, {{poster}}, {{duration}}, {{tmdb_link}}, {{imdb_link}}. Show templates only: {{season}}, {{episode}}, {{episode_title}}, {{tvdb_link}} — empty for a season/show-level completion rather than a single episode. |
+| `movie_body_template` | `RIVEN_PLUGIN_SETTING__NOTIFICATIONS__movie_body_template` | text (multiline) | No | — | Leave blank to use the default layout. Available in both movie and show templates: {{title}}, {{year}}, {{quality}}, {{resolution}}, {{release_group}}, {{downloader}}, {{provider}}, {{rating}}, {{overview}}, {{poster}}, {{duration}}, {{tmdb_link}}, {{imdb_link}}. Show templates only: {{season}}, {{episode}}, {{episode_title}}, {{tvdb_link}} — empty for a season/show-level completion rather than a single episode. |
+
+#### TV show notifications
+
+| Setting | Environment variable | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `show_use_custom_template` | `RIVEN_PLUGIN_SETTING__NOTIFICATIONS__show_use_custom_template` | boolean | No | — | Off by default (uses the built-in layout). Switch on to apply the templates below — leaves them in place, so you can draft a template without it taking effect yet. |
+| `show_title_template` | `RIVEN_PLUGIN_SETTING__NOTIFICATIONS__show_title_template` | text (multiline) | No | — | Leave blank to use the default layout. Available in both movie and show templates: {{title}}, {{year}}, {{quality}}, {{resolution}}, {{release_group}}, {{downloader}}, {{provider}}, {{rating}}, {{overview}}, {{poster}}, {{duration}}, {{tmdb_link}}, {{imdb_link}}. Show templates only: {{season}}, {{episode}}, {{episode_title}}, {{tvdb_link}} — empty for a season/show-level completion rather than a single episode. |
+| `show_body_template` | `RIVEN_PLUGIN_SETTING__NOTIFICATIONS__show_body_template` | text (multiline) | No | — | Leave blank to use the default layout. Available in both movie and show templates: {{title}}, {{year}}, {{quality}}, {{resolution}}, {{release_group}}, {{downloader}}, {{provider}}, {{rating}}, {{overview}}, {{poster}}, {{duration}}, {{tmdb_link}}, {{imdb_link}}. Show templates only: {{season}}, {{episode}}, {{episode_title}}, {{tvdb_link}} — empty for a season/show-level completion rather than a single episode. |
 <!-- END GENERATED -->
 

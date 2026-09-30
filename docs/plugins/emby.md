@@ -21,6 +21,7 @@ Subscribes to:
 - `riven.media-item.deleted`
 - `riven.media-server.active-sessions.requested`
 - `riven.media-server.artwork.requested`
+- `riven.media-server.deep-link.requested`
 
 ### Settings
 

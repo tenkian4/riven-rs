@@ -24,6 +24,7 @@ Subscribes to:
 - `riven.media-item.download.success`
 - `riven.media-server.active-sessions.requested`
 - `riven.media-server.artwork.requested`
+- `riven.media-server.deep-link.requested`
 
 ### Settings
 
