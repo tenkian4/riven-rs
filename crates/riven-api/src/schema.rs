@@ -156,6 +156,7 @@ mod tests {
         ("setProfileEnabled", "ManageSettings"),
         ("updateProfileSettings", "ManageSettings"),
         ("updateSettings", "ManageSettings"),
+        ("sendTestNotification", "ManageSettings"),
         ("completeInitialSetup", "ManageSettings"),
     ];
 
