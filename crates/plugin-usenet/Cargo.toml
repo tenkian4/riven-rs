@@ -17,6 +17,7 @@ redis = { workspace = true }
 sea-orm = { workspace = true }
 tokio = { workspace = true }
 reqwest = { workspace = true }
+url = "2"
 
 [lints]
 workspace = true

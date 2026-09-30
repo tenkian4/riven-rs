@@ -38,16 +38,28 @@ impl StremioAddonToken {
     }
 }
 
+/// This instance's own GraphQL/HTTP listen port, carried in the GraphQL
+/// context so a manual-NZB-URL resolver can tell a genuine
+/// `store_nzb_upload` loopback URL (same port this server is actually
+/// listening on) apart from an attacker-supplied `http://127.0.0.1:<other
+/// port>/internal/nzb-uploads/...` — which has the right shape but would
+/// otherwise smuggle an SSRF request to any other port on the container's
+/// loopback interface. See `validate_nzb_fetch_target`.
+#[derive(Clone, Copy)]
+pub struct GqlPort(pub u16);
+
 pub fn build_schema(
     registry: Arc<PluginRegistry>,
     job_queue: Arc<riven_queue::JobQueue>,
     db: DatabaseConnection,
+    redis_conn: redis::aio::ConnectionManager,
     http_client: HttpClient,
     log_directory: String,
     log_control: Arc<LogControl>,
     log_tx: tokio::sync::broadcast::Sender<String>,
     vfs_mount_manager: Arc<VfsMountManager>,
     stremio_addon_token: StremioAddonToken,
+    gql_port: GqlPort,
 ) -> AppSchema {
     let builder = Schema::build(
         QueryRoot::default(),
@@ -57,11 +69,13 @@ pub fn build_schema(
     .data(registry)
     .data(job_queue)
     .data(db)
+    .data(redis_conn)
     .data(http_client)
     .data(log_control)
     .data(log_tx)
     .data(vfs_mount_manager)
     .data(stremio_addon_token)
+    .data(gql_port)
     .data(queries::logs::LogDirectory(log_directory));
     let builder = plugin_dashboard::register_with_schema(builder);
     builder
@@ -128,6 +142,10 @@ mod tests {
         // Finding and committing a release.
         ("discoverStreams", "ScrapeItems"),
         ("downloadDiscoveredStream", "ScrapeItems"),
+        ("downloadExplicitNzb", "ScrapeItems"),
+        ("previewManualMagnet", "ScrapeItems"),
+        ("previewManualNzb", "ScrapeItems"),
+        ("saveStreamUrl", "ScrapeItems"),
         ("rescanUsenetHealth", "ScrapeItems"),
         // Deletes *and* re-scrapes, so it requires both.
         ("regrabUsenetTitle", "DeleteItems+ScrapeItems"),
