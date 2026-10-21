@@ -682,6 +682,7 @@ dependencies = [
  "matchit",
  "memchr",
  "mime",
+ "multer",
  "percent-encoding",
  "pin-project-lite",
  "serde_core",
@@ -3427,6 +3428,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -3905,6 +3907,7 @@ dependencies = [
  "plugin-calendar",
  "plugin-dashboard",
  "plugin-seerr",
+ "redis",
  "reqwest",
  "riven-core",
  "riven-db",
@@ -3986,6 +3989,7 @@ dependencies = [
  "tracing-log",
  "tracing-subscriber",
  "url",
+ "uuid",
 ]
 
 [[package]]

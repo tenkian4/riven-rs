@@ -325,13 +325,37 @@ pub async fn recompute(item_ids: &[i64]) -> Result<()> {
     Ok(())
 }
 
-/// User-driven exit from `Paused`. Flips paused rows to a non-sticky
+/// `ids` plus all their descendants, deepest first, so a recompute settles
+/// the leaves before the seasons and show that roll them up.
+async fn with_descendants_deepest_first(ids: &[i64]) -> Result<Vec<i64>> {
+    use sea_orm::ConnectionTrait;
+    let rows = orm()
+        .query_all_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "WITH RECURSIVE tree AS ( \
+                 SELECT id, 0 AS depth FROM media_items WHERE id = ANY($1) \
+                 UNION ALL \
+                 SELECT mi.id, t.depth + 1 FROM media_items mi JOIN tree t ON mi.parent_id = t.id \
+             ) \
+             SELECT id FROM tree GROUP BY id ORDER BY MAX(depth) DESC, id",
+            [ids.to_vec().into()],
+        ))
+        .await?;
+    Ok(rows
+        .iter()
+        .filter_map(|row| row.try_get::<i64>("", "id").ok())
+        .collect())
+}
+
+/// User-driven exit from `Paused`, for `ids` and everything beneath them
+/// (mirroring how pausing cascades). Flips paused rows to a non-sticky
 /// placeholder (`Indexed`), then derives the real post-pause state from the
 /// current facts via [`recompute`].
 pub async fn unpause_items(ids: &[i64]) -> Result<()> {
     if ids.is_empty() {
         return Ok(());
     }
+    let ids = with_descendants_deepest_first(ids).await?;
     media_items::Entity::update_many()
         .col_expr(
             media_items::Column::State,
@@ -342,5 +366,5 @@ pub async fn unpause_items(ids: &[i64]) -> Result<()> {
         .filter(media_items::Column::State.eq(MediaItemState::Paused))
         .exec(orm())
         .await?;
-    recompute(ids).await
+    recompute(&ids).await
 }

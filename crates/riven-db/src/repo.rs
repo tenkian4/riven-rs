@@ -93,18 +93,37 @@ pub async fn retry_items_by_ids(ids: Vec<i64>) -> Result<u64> {
     Ok(result.rows_affected)
 }
 
+/// Pause `ids` and everything beneath them. A paused show whose seasons and
+/// episodes keep their own states is still scraped, because the scheduler
+/// works on the leaves; so pausing a show or season has to reach its
+/// unfinished descendants. Completed and unreleased descendants are left
+/// alone: they have nothing to scrape, and `unpause_items_by_ids` would only
+/// derive them straight back.
 pub async fn pause_items_by_ids(ids: Vec<i64>) -> Result<u64> {
     if ids.is_empty() {
         return Ok(0);
     }
-    let result = media_items::Entity::update_many()
-        .col_expr(media_items::Column::State, MediaItemState::Paused.as_enum())
-        .col_expr(media_items::Column::UpdatedAt, Expr::cust("NOW()"))
-        .filter(media_items::Column::Id.is_in(ids.iter().copied()))
-        .exec(orm())
+    let rows = orm()
+        .query_all_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "WITH RECURSIVE tree AS ( \
+                 SELECT id FROM media_items WHERE id = ANY($1) \
+                 UNION \
+                 SELECT mi.id FROM media_items mi JOIN tree t ON mi.parent_id = t.id \
+             ) \
+             UPDATE media_items SET state = 'paused', updated_at = NOW() \
+             WHERE id IN (SELECT id FROM tree) \
+               AND (id = ANY($1) OR state NOT IN ('completed', 'unreleased', 'paused')) \
+             RETURNING id",
+            [ids.clone().into()],
+        ))
         .await?;
-    state::recompute(&ids).await?;
-    Ok(result.rows_affected)
+    let changed: Vec<i64> = rows
+        .iter()
+        .filter_map(|row| row.try_get::<i64>("", "id").ok())
+        .collect();
+    state::recompute(&changed).await?;
+    Ok(changed.len() as u64)
 }
 
 pub async fn unpause_items_by_ids(ids: Vec<i64>) -> Result<u64> {

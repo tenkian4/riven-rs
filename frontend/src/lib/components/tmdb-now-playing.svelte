@@ -15,7 +15,7 @@
         getLibraryStatus,
         getResolvedLibraryId,
         markLibraryStatusRequested
-    } from "#lib/stores/library-status.svelte";
+    } from "#lib/stores/library-status.svelte.js";
     import { toast } from "svelte-sonner";
     import { createScopedLogger } from "#lib/logger.js";
 
