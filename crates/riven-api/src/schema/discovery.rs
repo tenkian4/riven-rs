@@ -7,7 +7,8 @@ use riven_core::types::*;
 use riven_db::entities::MediaItem;
 use riven_db::repo;
 use riven_queue::discovery::{
-    ParseContext, load_active_profiles, load_dubbed_anime_only, rank_streams,
+    ParseContext, ShowEpisode, load_active_profiles, load_dubbed_anime_only, rank_streams,
+    season_scene_number,
 };
 use riven_queue::indexing::apply_indexed_media_item;
 use riven_queue::lifecycle::{upsert_requested_movie, upsert_requested_show};
@@ -105,10 +106,27 @@ pub fn build_discovery_targets(
         .clone()
         .unwrap_or_else(|| requested_title.to_string());
     let aliases = indexed.aliases.clone().unwrap_or_default();
+    let show_episodes: Vec<ShowEpisode> = indexed
+        .seasons
+        .iter()
+        .flatten()
+        .flat_map(|season| {
+            season.episodes.iter().filter_map(|episode| {
+                Some(ShowEpisode {
+                    id: None,
+                    season: season.number,
+                    episode: episode.number,
+                    title: episode.title.clone()?,
+                    scene: episode.scene,
+                })
+            })
+        })
+        .collect();
     let target = |item_type: MediaItemType,
                   season_number: Option<i32>,
                   episode_number: Option<i32>,
                   absolute_number: Option<i32>,
+                  scene: Option<(i32, i32)>,
                   season_episodes: Vec<(i32, Option<i32>)>| {
         // A movie's year is its own; an episode or season inherits the show's.
         let is_movie = item_type == MediaItemType::Movie;
@@ -122,6 +140,7 @@ pub fn build_discovery_targets(
                 season_number,
                 episode_number,
                 absolute_number,
+                scene,
                 item_year: if is_movie { indexed.year } else { None },
                 parent_year: if is_movie { None } else { indexed.year },
                 item_country: indexed.country.clone(),
@@ -130,6 +149,7 @@ pub fn build_discovery_targets(
                 show_status: indexed.status,
                 item_title: correct_title.clone(),
                 item_aired_at: None,
+                show_episodes: show_episodes.clone(),
                 correct_title: correct_title.clone(),
                 aliases: aliases.clone(),
                 profiles: profiles.clone(),
@@ -146,7 +166,14 @@ pub fn build_discovery_targets(
     };
 
     match item_type {
-        MediaItemType::Movie => Ok(vec![target(MediaItemType::Movie, None, None, None, vec![])]),
+        MediaItemType::Movie => Ok(vec![target(
+            MediaItemType::Movie,
+            None,
+            None,
+            None,
+            None,
+            vec![],
+        )]),
         MediaItemType::Show => {
             let all_seasons = indexed.seasons.clone().unwrap_or_default();
             let selected: Vec<i32> = if let Some(numbers) = seasons {
@@ -202,6 +229,7 @@ pub fn build_discovery_targets(
                     Some(number),
                     Some(episode_number),
                     episode.absolute_number,
+                    episode.scene,
                     season_episodes(season),
                 )]);
             }
@@ -218,6 +246,7 @@ pub fn build_discovery_targets(
                 targets.push(target(
                     MediaItemType::Season,
                     Some(number),
+                    None,
                     None,
                     None,
                     season_episodes(season),
@@ -260,7 +289,7 @@ pub async fn discover_streams(
 
     let mut discovered = Vec::new();
     for target in targets {
-        let scraped = run_scrape_discovery(
+        let mut scraped = run_scrape_discovery(
             registry,
             target.item_type,
             imdb_id,
@@ -270,6 +299,34 @@ pub async fn discover_streams(
             target.episode_number,
         )
         .await;
+        // Indexers number by the release, Stremio addons by Cinemeta: ask
+        // with the scene numbering too when it differs (see `scrape::start`).
+        let scene = match target.item_type {
+            MediaItemType::Episode => target
+                .parse_ctx
+                .scene
+                .filter(|s| Some(*s) != target.season_number.zip(target.episode_number))
+                .map(|(season, episode)| (Some(season), Some(episode))),
+            MediaItemType::Season => target
+                .season_number
+                .and_then(|season| season_scene_number(season, &target.parse_ctx.show_episodes))
+                .map(|scene_season| (Some(scene_season), None)),
+            _ => None,
+        };
+        if let Some((season, episode)) = scene {
+            scraped.extend(
+                run_scrape_discovery(
+                    registry,
+                    target.item_type,
+                    imdb_id,
+                    tvdb_id,
+                    &target.scrape_title,
+                    season,
+                    episode,
+                )
+                .await,
+            );
+        }
         let ranked = tokio::task::spawn_blocking({
             let parse_ctx = target.parse_ctx.clone();
             move || rank_streams(parse_ctx, scraped)

@@ -282,6 +282,126 @@ pub fn release_matches_episode(
     event_hit(&toks, session, &dates, &venue_words, ep_session, aired)
 }
 
+/// `s09e11` / `s09e11e12`.
+fn is_episode_code(tok: &str) -> bool {
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    let Some((season, eps)) = tok.strip_prefix('s').and_then(|t| t.split_once('e')) else {
+        return false;
+    };
+    digits(season) && eps.split('e').all(digits)
+}
+
+/// Tokens for title comparison: release groups drop apostrophes ("Leos"),
+/// spell out "&", and write TVDB's "(1)" / "#8" as "Part One" / "No 8", so
+/// number words become digits and "part"/"pt"/"no" before a number go.
+fn title_tokens(text: &str) -> Vec<String> {
+    const NUMBERS: [&str; 10] = [
+        "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+    ];
+    let toks: Vec<String> = tokens(&text.replace(['\'', '\u{2019}'], "").replace('&', " and "))
+        .into_iter()
+        .map(|t| match NUMBERS.iter().position(|n| *n == t) {
+            Some(i) => (i + 1).to_string(),
+            None => t,
+        })
+        .collect();
+    let is_number = |t: Option<&String>| t.is_some_and(|t| t.bytes().all(|b| b.is_ascii_digit()));
+    toks.iter()
+        .enumerate()
+        .filter(|(i, t)| {
+            !(matches!(t.as_str(), "part" | "pt" | "no") && is_number(toks.get(i + 1)))
+        })
+        .map(|(_, t)| t.clone())
+        .collect()
+}
+
+/// The episode a release names by title right after its `SxxEyy` token
+/// ("Kitchen.Nightmares.S09E11.Simmer.Down.1080p" → "Simmer Down"). Release
+/// numbering doesn't always follow TVDB's (a run TVDB calls season 8 can ship
+/// as S09), so a named title is stronger evidence than the number. The
+/// longest matching title wins, so "Lyla's Family Restaurant" beats "Lyla's",
+/// and an episode whose title fits the same run with gaps but reaches further
+/// beats a shorter title that is merely its prefix (see `subsequence_span`).
+/// `None` when the release names none of `episodes`.
+// ponytail: a one-word title that is also a release tag ("Proper") can
+// false-match; add a tag stop-list if that ever bites.
+pub fn named_episode<'a, T>(
+    release: &str,
+    episodes: &'a [T],
+    title: impl Fn(&T) -> &str,
+) -> Option<&'a T> {
+    let toks = title_tokens(release);
+    let start = toks.iter().position(|t| is_episode_code(t))? + 1;
+    // Skip the tail of a split multi-episode code ("S09E11-E12").
+    let after = &toks[start..];
+    let skip = after
+        .iter()
+        .take_while(|t| {
+            t.strip_prefix('e')
+                .is_some_and(|n| n.parse::<u32>().is_ok())
+        })
+        .count();
+    let after = &after[skip..];
+
+    let hits: Vec<(usize, &T)> = episodes
+        .iter()
+        .filter_map(|ep| {
+            let want = title_tokens(title(ep));
+            (!want.is_empty() && after.starts_with(&want)).then_some((want.len(), ep))
+        })
+        .collect();
+    let best = hits.iter().map(|(len, _)| *len).max()?;
+    // Two episodes with the same title ("Pilot" in two seasons) say nothing.
+    let mut longest = hits.into_iter().filter(|(len, _)| *len == best);
+    let (_, ep) = longest.next()?;
+    if longest.next().is_some() {
+        return None;
+    }
+
+    // A shorter episode's title can be a strict prefix of the title the
+    // release actually names: TVDB calls S05E04 of Ramsay's Kitchen
+    // Nightmares "La Parra Revisited", but the release writes it out as
+    // "S05E04.La.Parra.de.Burriana.Revisited" — which prefix-matches the
+    // show's *other* episode "La Parra de Burriana" (S04E01) and hands the
+    // file to it, blacklisting a perfectly good release. When another
+    // episode's title fits the same run in order and reaches further, it is
+    // the one the release names.
+    let farther: Vec<(usize, &T)> = episodes
+        .iter()
+        .filter_map(|ep| {
+            let want = title_tokens(title(ep));
+            subsequence_span(after, &want)
+                .filter(|span| *span > best)
+                .map(|span| (span, ep))
+        })
+        .collect();
+    let Some(furthest) = farther.iter().map(|(span, _)| *span).max() else {
+        return Some(ep);
+    };
+    // Ambiguity means no match, same as two equally-long prefix hits.
+    let mut winners = farther.into_iter().filter(|(span, _)| *span == furthest);
+    let (_, better) = winners.next()?;
+    winners.next().is_none().then_some(better)
+}
+
+/// How far into `after` an episode's title tokens reach as an in-order
+/// subsequence anchored at the first token, or `None` when they don't fit.
+/// A prefix match is just the gapless case, so this is only ever used to
+/// settle which of two titles the release really names.
+// ponytail: a gap may swallow release tags, so an episode titled "Pilot Web"
+// could out-reach "Pilot" on "S01E01.Pilot.1080p.WEB-DL"; stop the walk at a
+// tag stop-list if that ever bites.
+fn subsequence_span(after: &[String], want: &[String]) -> Option<usize> {
+    if want.is_empty() || after.first() != want.first() {
+        return None;
+    }
+    let mut at = 0;
+    for token in want {
+        at += after[at..].iter().position(|t| t == token)? + 1;
+    }
+    Some(at)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -393,5 +513,82 @@ mod tests {
         assert!(parse_episode_event("Pilot").is_none());
         assert!(parse_episode_event("Test 1 - Day 1, Session 1").is_none());
         assert!(parse_episode_event("The One Where It Ends (Part 2)").is_none());
+    }
+
+    #[test]
+    fn named_episode_reads_the_title_after_the_episode_code() {
+        let eps = [
+            "Simmer Down",
+            "Wick 'n Ore Kitchen & Tap",
+            "Lyla's",
+            "Lyla's Family Restaurant (2)",
+        ];
+        let named = |r| named_episode(r, &eps, |t| t).copied();
+        assert_eq!(
+            named("Kitchen.Nightmares.S09E11.Simmer.Down.1080p.AMZN.WEB-DL-FLUX"),
+            Some("Simmer Down")
+        );
+        assert_eq!(
+            named("Show.S09E11.Wick.n.Ore.Kitchen.and.Tap.720p"),
+            Some("Wick 'n Ore Kitchen & Tap")
+        );
+        assert_eq!(
+            named("Show.S09E09-E10.Lylas.Family.Restaurant.2.1080p"),
+            Some("Lyla's Family Restaurant (2)")
+        );
+        assert_eq!(named("Show.S09E09.Lylas.1080p"), Some("Lyla's"));
+        assert_eq!(
+            named("Show.S09E09.Lylas.Diner.1080p"),
+            Some("Lyla's"),
+            "a longer release title still names the episode it starts with"
+        );
+        assert_eq!(
+            named("Kitchen.Nightmares.US.S09E11.1080p.WEB.h264-EDITH"),
+            None
+        );
+        assert_eq!(named("Simmer.Down.1080p"), None, "no episode code");
+        let parts = ["La Galleria 33 (1)", "La Galleria 33 (2)", "Revisited #8"];
+        let named = |r| named_episode(r, &parts, |t| t).copied();
+        assert_eq!(
+            named("Kitchen.Nightmares.S05E01.La.Galleria.33.Part.One.480p.AMZN"),
+            Some("La Galleria 33 (1)")
+        );
+        assert_eq!(
+            named("Kitchen.Nightmares.US.S06E02.La.Galleria.33.Part.2.576p"),
+            Some("La Galleria 33 (2)")
+        );
+        assert_eq!(
+            named("Kitchen.Nightmares.S05E06.Revisited.No.8.480p"),
+            Some("Revisited #8")
+        );
+        let dupes = ["Pilot", "Pilot"];
+        assert_eq!(named_episode("Show.S02E01.Pilot.720p", &dupes, |t| t), None);
+    }
+
+    #[test]
+    fn a_prefix_of_the_named_title_loses_to_the_episode_that_reaches_further() {
+        // TVDB shortens S05E04 to "La Parra Revisited"; the release spells the
+        // restaurant out, so the show's S04E01 "La Parra de Burriana" is a
+        // strict prefix of what the release names and used to win.
+        let eps = ["La Parra de Burriana", "La Parra Revisited"];
+        let named = |r| named_episode(r, &eps, |t| t).copied();
+        assert_eq!(
+            named(
+                "Ramsays.Kitchen.Nightmares.S05E04.La.Parra.de.Burriana.Revisited.576p.AMZN.WEB-DL.DDP2.0.H.264-BTN.mkv"
+            ),
+            Some("La Parra Revisited")
+        );
+        // The prefix episode still wins when the release names only it.
+        assert_eq!(
+            named("Ramsays.Kitchen.Nightmares.S04E01.La.Parra.de.Burriana.576p.AMZN.WEB-DL-BTN"),
+            Some("La Parra de Burriana")
+        );
+        // A release title that merely trails off is unchanged: nothing else
+        // explains the extra words, so the prefix hit stands.
+        let lylas = ["Lyla's", "Lyla's Family Restaurant (2)"];
+        assert_eq!(
+            named_episode("Show.S09E09.Lylas.Diner.1080p", &lylas, |t| t).copied(),
+            Some("Lyla's")
+        );
     }
 }

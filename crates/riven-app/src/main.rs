@@ -271,6 +271,7 @@ async fn main() -> Result<()> {
     );
     {
         let mut redis = job_queue.redis.clone();
+        riven_queue::migrate_from_apalis_rc(&mut redis).await?;
         let queues = job_queue.queue_names();
         riven_queue::prune_queue_history(&mut redis, &queues).await;
     }
@@ -350,6 +351,7 @@ async fn main() -> Result<()> {
 
     let gql_host = settings.gql_host.clone();
     let gql_port = settings.gql_port;
+    let media_port = settings.media_port;
     // Auth configuration was validated before the database was opened; see
     // `validate_auth_settings`.
     let public_url = resolve_public_url(
@@ -393,6 +395,7 @@ async fn main() -> Result<()> {
             if let Err(e) = riven_api::start_server(riven_api::StartServerConfig {
                 host: gql_host,
                 port: gql_port,
+                media_port,
                 registry: reg,
                 job_queue: jq.clone(),
                 redis_conn: redis_conn.clone(),

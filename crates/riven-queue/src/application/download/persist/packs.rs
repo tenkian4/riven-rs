@@ -74,15 +74,31 @@ pub async fn persist_season(
         .map(|f| (f, parse_file_path(&f.filename)))
         .collect();
 
+    // A file that names an episode of the show by title belongs to that
+    // episode whatever its number says: packs are often numbered in a
+    // different order (or season) than TVDB.
+    let show_episodes = crate::context::load_show_episodes(id, show_id).await;
+    let named_owner: Vec<Option<i64>> = parsed_video_files
+        .iter()
+        .map(|(f, _)| {
+            super::super::event_match::named_episode(&f.filename, &show_episodes, |e| {
+                e.title.as_str()
+            })
+            .and_then(|e| e.id)
+        })
+        .collect();
+
     let mut episode_matches: Vec<(&MediaItem, Vec<(&DownloadFile, riven_rank::ParsedData)>)> =
         Vec::with_capacity(episodes.len());
     for ep in &episodes {
-        let episode_number = ep.episode_number.unwrap_or(1);
         let matched: Vec<(&DownloadFile, riven_rank::ParsedData)> = parsed_video_files
             .iter()
-            .filter(|(_, p)| {
-                matches_episode_lookup(p, season_number, episode_number, ep.absolute_number)
+            .zip(&named_owner)
+            .filter(|((_, p), owner)| match owner {
+                Some(owner) => *owner == ep.id,
+                None => matches_episode_lookup(p, ep, season_number, &show_episodes),
             })
+            .map(|(fp, _)| fp)
             .map(|(f, p)| (*f, p.clone()))
             .collect();
         episode_matches.push((ep, matched));
@@ -308,6 +324,7 @@ pub async fn persist_show(
     };
 
     let mut completed_episode_ids: Vec<i64> = Vec::new();
+    let show_episodes = crate::context::load_show_episodes(id, id).await;
 
     // One query for every season's episodes rather than one per season.
     let season_ids: Vec<i64> = seasons.iter().map(|season| season.id).collect();
@@ -333,16 +350,10 @@ pub async fn persist_show(
             episodes
                 .iter()
                 .map(|ep| {
-                    let episode_number = ep.episode_number.unwrap_or(1);
                     let matched = parsed_video_files
                         .iter()
                         .filter(|(_, p)| {
-                            matches_episode_lookup(
-                                p,
-                                season_number,
-                                episode_number,
-                                ep.absolute_number,
-                            )
+                            matches_episode_lookup(p, ep, season_number, &show_episodes)
                         })
                         .map(|(f, p)| (*f, p.clone()))
                         .collect();

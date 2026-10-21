@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use riven_core::types::DownloadFile;
-use riven_db::entities::Stream;
+use riven_db::entities::{MediaItem, Stream};
 use riven_db::repo;
 
 /// The parsed resolution of a stream, falling back to `"unknown"` when the
@@ -84,18 +84,27 @@ pub fn is_persistable_video_file(filename: &str) -> bool {
 
 pub use riven_core::filename::looks_obfuscated;
 
-/// Whether a parsed file names this episode: by season+episode when the file
-/// carries seasons, otherwise by absolute number.
+/// Whether a parsed file names episode `ep` of TVDB season `season`: by
+/// season+episode when the file carries seasons (any of the numberings
+/// `release_numberings` allows, given the show's `show_episodes`), otherwise
+/// by absolute number.
 pub fn matches_episode_lookup(
     parsed: &riven_rank::ParsedData,
+    ep: &MediaItem,
     season: i32,
-    ep: i32,
-    abs: Option<i32>,
+    show_episodes: &[crate::discovery::ShowEpisode],
 ) -> bool {
     if parsed.seasons.is_empty() {
-        abs.is_some_and(|abs| parsed.episodes.contains(&abs))
+        ep.absolute_number
+            .is_some_and(|abs| parsed.episodes.contains(&abs))
     } else {
-        parsed.seasons.contains(&season) && parsed.episodes.contains(&ep)
+        crate::discovery::release_numberings(
+            (season, ep.episode_number.unwrap_or(1)),
+            ep.scene_season_number.zip(ep.scene_episode_number),
+            show_episodes,
+        )
+        .iter()
+        .any(|(s, e)| parsed.seasons.contains(s) && parsed.episodes.contains(e))
     }
 }
 
@@ -171,24 +180,63 @@ pub fn select_episode_files<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::{is_persistable_video_file, is_sample_file, matches_episode_lookup};
+    use super::{
+        is_persistable_video_file, is_sample_file, matches_episode_lookup, parse_file_path,
+    };
+    use crate::application::download::candidates::tests::media_item;
+    use crate::discovery::ShowEpisode;
+    use riven_db::entities::MediaItem;
 
     #[test]
     fn episode_lookup_matches_season_episode_or_absolute() {
+        let ep = |episode, abs| MediaItem {
+            episode_number: Some(episode),
+            absolute_number: abs,
+            ..media_item()
+        };
         let mut parsed = riven_rank::ParsedData {
             seasons: vec![1, 2],
             episodes: vec![3],
             ..Default::default()
         };
-        assert!(matches_episode_lookup(&parsed, 2, 3, None));
-        assert!(!matches_episode_lookup(&parsed, 3, 3, Some(3)));
+        assert!(matches_episode_lookup(&parsed, &ep(3, None), 2, &[]));
+        assert!(!matches_episode_lookup(&parsed, &ep(3, Some(3)), 3, &[]));
 
         parsed.seasons.clear();
-        assert!(matches_episode_lookup(&parsed, 1, 1, Some(3)));
-        assert!(!matches_episode_lookup(&parsed, 1, 3, None));
+        assert!(matches_episode_lookup(&parsed, &ep(1, Some(3)), 1, &[]));
+        assert!(!matches_episode_lookup(&parsed, &ep(3, None), 1, &[]));
 
         parsed.episodes.clear();
-        assert!(!matches_episode_lookup(&parsed, 1, 3, Some(3)));
+        assert!(!matches_episode_lookup(&parsed, &ep(3, Some(3)), 1, &[]));
+    }
+
+    #[test]
+    fn episode_lookup_uses_scene_numbering() {
+        // Kitchen Nightmares (US): TVDB S07E05 is scene S08E05, TVDB S08E05
+        // is scene S09E05.
+        let ep = |season, scene: (i32, i32)| {
+            (
+                MediaItem {
+                    episode_number: Some(5),
+                    scene_season_number: Some(scene.0),
+                    scene_episode_number: Some(scene.1),
+                    ..media_item()
+                },
+                ShowEpisode {
+                    id: None,
+                    season,
+                    episode: 5,
+                    title: String::new(),
+                    scene: Some(scene),
+                },
+            )
+        };
+        let (s7, s7_show) = ep(7, (8, 5));
+        let (s8, s8_show) = ep(8, (9, 5));
+        let show = [s7_show, s8_show];
+        let parsed = parse_file_path("Kitchen.Nightmares.S08E05.1080p.HULU-ViETNAM.mkv");
+        assert!(matches_episode_lookup(&parsed, &s7, 7, &show));
+        assert!(!matches_episode_lookup(&parsed, &s8, 8, &show));
     }
 
     #[test]

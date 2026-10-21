@@ -1,10 +1,10 @@
 <script lang="ts">
-    import { Badge } from "$lib/components/ui/badge/index.js";
-    import { Button } from "$lib/components/ui/button/index.js";
-    import { Separator } from "$lib/components/ui/separator/index.js";
+    import { Badge } from "#lib/components/ui/badge/index.js";
+    import { Button } from "#lib/components/ui/button/index.js";
+    import { Separator } from "#lib/components/ui/separator/index.js";
     import SettingFieldEditor from "./setting-field-editor.svelte";
     import { groupPluginsByCategory, pluginStatus, buildGeneralSections } from "./helpers";
-    import { gqlClient } from "$lib/graphql-client";
+    import { gqlClient } from "#lib/graphql-client.js";
     import { SEND_TEST_NOTIFICATION } from "./operations";
     import { toast } from "svelte-sonner";
     import type { SettingsSection, SetupGroup } from "./types";

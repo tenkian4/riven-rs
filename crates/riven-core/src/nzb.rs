@@ -23,6 +23,22 @@ pub fn is_nzb_info_hash(info_hash: &str) -> bool {
     info_hash.starts_with(NZB_INFO_HASH_PREFIX)
 }
 
+/// No NZB URL could be recovered for a release, so no indexer or provider was
+/// ever asked about it. Distinct from "the indexer has no body for this
+/// release": that is a verdict on the release, this is the absence of one, and
+/// conflating them permanently blacklists good releases whose stream rows
+/// simply outlived the URL cache.
+#[derive(Debug, thiserror::Error)]
+#[error("no NZB URL left for this release")]
+pub struct LostNzbUrlError;
+
+/// The NZB URL a stream row carries as its handle, when it has one. Torrent
+/// rows (and NZB rows written before the URL was stored on them) hold a
+/// synthetic `magnet:?xt=urn:btih:…` instead, which is not fetchable.
+pub fn nzb_url_from_handle(handle: &str) -> Option<&str> {
+    (handle.starts_with("http://") || handle.starts_with("https://")).then_some(handle)
+}
+
 pub fn nzb_url_redis_key(info_hash: &str) -> String {
     format!("riven:nzb:url:{info_hash}")
 }
@@ -274,12 +290,12 @@ pub fn parse_newznab_caps(body: &str) -> NewznabCaps {
     while let Ok(event) = reader.read_event() {
         match event {
             Event::Eof => break,
-            Event::Start(e) if e.name().as_ref() == b"searching" => in_searching = true,
-            Event::End(e) if e.name().as_ref() == b"searching" => in_searching = false,
+            Event::Start(e) if e.name().as_ref() == "searching" => in_searching = true,
+            Event::End(e) if e.name().as_ref() == "searching" => in_searching = false,
             // Modes are usually empty elements, but a self-closing tag written
             // as a start/end pair parses as `Start` — accept both.
             Event::Empty(e) | Event::Start(e) if in_searching => {
-                let name = String::from_utf8_lossy(e.name().as_ref()).into_owned();
+                let name = e.name().as_ref().to_owned();
                 let mut available = true;
                 let mut params = std::collections::HashSet::new();
                 for attr in e.attributes().flatten() {
@@ -288,8 +304,8 @@ pub fn parse_newznab_caps(body: &str) -> NewznabCaps {
                         continue;
                     };
                     match attr.key.as_ref() {
-                        b"available" => available = !value.eq_ignore_ascii_case("no"),
-                        b"supportedParams" => {
+                        "available" => available = !value.eq_ignore_ascii_case("no"),
+                        "supportedParams" => {
                             params.extend(
                                 value
                                     .split(',')
@@ -337,8 +353,8 @@ pub fn parse_newznab_xml(body: &str) -> Vec<NewznabItem> {
                 let name = e.name();
                 let local = name.as_ref();
                 match local {
-                    b"item" => current = Some(NewznabItem::default()),
-                    b"title" if current.is_some() => text_target = Some("title"),
+                    "item" => current = Some(NewznabItem::default()),
+                    "title" if current.is_some() => text_target = Some("title"),
                     _ => {}
                 }
             }
@@ -349,9 +365,9 @@ pub fn parse_newznab_xml(body: &str) -> Vec<NewznabItem> {
                     continue;
                 };
                 match local {
-                    b"enclosure" => {
+                    "enclosure" => {
                         for attr in e.attributes().flatten() {
-                            if attr.key.as_ref() == b"url"
+                            if attr.key.as_ref() == "url"
                                 && let Ok(v) =
                                     attr.normalized_value(quick_xml::XmlVersion::Implicit1_0)
                             {
@@ -359,9 +375,9 @@ pub fn parse_newznab_xml(body: &str) -> Vec<NewznabItem> {
                             }
                         }
                     }
-                    b"link" if item.nzb_url.is_empty() => {
+                    "link" if item.nzb_url.is_empty() => {
                         for attr in e.attributes().flatten() {
-                            if attr.key.as_ref() == b"href"
+                            if attr.key.as_ref() == "href"
                                 && let Ok(v) =
                                     attr.normalized_value(quick_xml::XmlVersion::Implicit1_0)
                             {
@@ -369,18 +385,18 @@ pub fn parse_newznab_xml(body: &str) -> Vec<NewznabItem> {
                             }
                         }
                     }
-                    b"newznab:attr" | b"torznab:attr" => {
+                    "newznab:attr" | "torznab:attr" => {
                         let mut name_val: Option<String> = None;
                         let mut value_val: Option<String> = None;
                         for attr in e.attributes().flatten() {
                             match attr.key.as_ref() {
-                                b"name" => {
+                                "name" => {
                                     name_val = attr
                                         .normalized_value(quick_xml::XmlVersion::Implicit1_0)
                                         .ok()
                                         .map(std::borrow::Cow::into_owned);
                                 }
-                                b"value" => {
+                                "value" => {
                                     value_val = attr
                                         .normalized_value(quick_xml::XmlVersion::Implicit1_0)
                                         .ok()
@@ -400,7 +416,7 @@ pub fn parse_newznab_xml(body: &str) -> Vec<NewznabItem> {
             }
             Ok(Event::Text(t)) => {
                 if let (Some(target), Some(item)) = (text_target.take(), current.as_mut()) {
-                    let text = String::from_utf8_lossy(t.as_ref()).into_owned();
+                    let text = t.as_ref().to_owned();
                     if target == "title" && item.title.is_empty() {
                         item.title = text;
                     }
@@ -408,7 +424,7 @@ pub fn parse_newznab_xml(body: &str) -> Vec<NewznabItem> {
             }
             Ok(Event::CData(t)) => {
                 if let (Some(target), Some(item)) = (text_target.take(), current.as_mut()) {
-                    let text = String::from_utf8_lossy(t.as_ref()).into_owned();
+                    let text = t.as_ref().to_owned();
                     if target == "title" && item.title.is_empty() {
                         item.title = text;
                     }
@@ -416,7 +432,7 @@ pub fn parse_newznab_xml(body: &str) -> Vec<NewznabItem> {
             }
             Ok(Event::End(e)) => {
                 let name = e.name();
-                if name.as_ref() == b"item"
+                if name.as_ref() == "item"
                     && let Some(item) = current.take()
                 {
                     items.push(item);
@@ -646,5 +662,27 @@ mod tests {
         assert!(is_valid_upload_filename(
             "550e8400-e29b-41d4-a716-446655440000.nzb"
         ));
+    }
+
+    /// A stream row holds either a fetchable NZB URL or the synthetic magnet
+    /// built from its info_hash. Mistaking the latter for a URL would send a
+    /// `magnet:` string to an HTTP client; mistaking a real URL for a magnet
+    /// would send the download back to the expiring cache it is meant to
+    /// outlive, and a miss there blacklists the release for good.
+    #[test]
+    fn only_a_real_url_counts_as_a_fetch_handle() {
+        let url = "https://indexer.example/getnzb/abc.nzb?apikey=k";
+        assert_eq!(nzb_url_from_handle(url), Some(url));
+        assert_eq!(
+            nzb_url_from_handle("http://indexer/x.nzb"),
+            Some("http://indexer/x.nzb")
+        );
+
+        let hash = nzb_info_hash(url);
+        assert_eq!(
+            nzb_url_from_handle(&format!("magnet:?xt=urn:btih:{hash}")),
+            None
+        );
+        assert_eq!(nzb_url_from_handle(""), None);
     }
 }

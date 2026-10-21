@@ -10,6 +10,7 @@ mod oidc;
 mod plex;
 mod stremio;
 
+use std::future::IntoFuture;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -42,6 +43,9 @@ use authn::AuthService;
 pub struct StartServerConfig {
     pub host: String,
     pub port: u16,
+    /// The local media listener's port; `0` leaves it off. See
+    /// `RivenSettings::media_port`.
+    pub media_port: u16,
     pub registry: Arc<PluginRegistry>,
     pub job_queue: Arc<JobQueue>,
     pub redis_conn: redis::aio::ConnectionManager,
@@ -94,6 +98,7 @@ pub async fn start_server(config: StartServerConfig) -> Result<()> {
     let StartServerConfig {
         host,
         port,
+        media_port,
         registry,
         job_queue,
         redis_conn,
@@ -132,15 +137,20 @@ pub async fn start_server(config: StartServerConfig) -> Result<()> {
 
     start_event_controller(job_queue.clone());
 
-    let mut board_builder = ApiBuilder::new(Router::new())
-        .register(job_queue.index_storage.clone())
-        .register(job_queue.scrape_storage.clone())
-        .register(job_queue.parse_storage.clone())
-        .register(job_queue.download_storage.clone())
-        .register(job_queue.rank_streams_storage.clone())
-        .register(job_queue.process_media_item_storage.clone());
+    macro_rules! on_board {
+        ($builder:expr, $storage:expr) => {
+            $builder.register($storage.get_config().queue.as_ref(), $storage.clone())
+        };
+    }
+    let mut board_builder = ApiBuilder::new(Router::new());
+    board_builder = on_board!(board_builder, job_queue.index_storage);
+    board_builder = on_board!(board_builder, job_queue.scrape_storage);
+    board_builder = on_board!(board_builder, job_queue.parse_storage);
+    board_builder = on_board!(board_builder, job_queue.download_storage);
+    board_builder = on_board!(board_builder, job_queue.rank_streams_storage);
+    board_builder = on_board!(board_builder, job_queue.process_media_item_storage);
     for storage in job_queue.plugin_hook_storages.values() {
-        board_builder = board_builder.register(storage.clone());
+        board_builder = on_board!(board_builder, storage);
     }
     let board_api = board_builder.build();
     let board_ui = Router::new().fallback_service(ServeUI::new());
@@ -255,6 +265,7 @@ pub async fn start_server(config: StartServerConfig) -> Result<()> {
         app = app.layer(security_header_layer(header));
     }
 
+    let local_media = (media_port != 0).then(|| local_media_router(state.clone()));
     let app = app.with_state(state);
 
     let listener = tokio::net::TcpListener::bind(format!("{host}:{port}")).await?;
@@ -263,14 +274,39 @@ pub async fn start_server(config: StartServerConfig) -> Result<()> {
     // `with_connect_info` rather than the plain service so the auth rate
     // limiter can key on the peer address — the only client identity that
     // cannot be forged by a header.
-    axum::serve(
+    let api = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )
-    .with_graceful_shutdown(async move { cancel.cancelled().await })
-    .await?;
+    .with_graceful_shutdown({
+        let cancel = cancel.clone();
+        async move { cancel.cancelled().await }
+    });
 
+    let Some(local_media) = local_media else {
+        api.await?;
+        return Ok(());
+    };
+    let listener = tokio::net::TcpListener::bind(format!("{host}:{media_port}")).await?;
+    tracing::info!(host = %host, port = media_port, "local media server listening");
+    let media = axum::serve(listener, local_media)
+        .with_graceful_shutdown(async move { cancel.cancelled().await });
+
+    tokio::try_join!(api.into_future(), media.into_future())?;
     Ok(())
+}
+
+/// `/media/{id}` alone, with no credential asked for. It answers whoever can
+/// reach its port, so that port is published on loopback only.
+fn local_media_router(state: ApiState) -> Router {
+    let mut router = Router::new().route(
+        "/media/{entry_id}",
+        get(media::local_media_handler).head(media::local_media_handler),
+    );
+    for header in SECURITY_HEADERS {
+        router = router.layer(security_header_layer(header));
+    }
+    router.with_state(state)
 }
 
 /// Response headers applied to everything riven serves.

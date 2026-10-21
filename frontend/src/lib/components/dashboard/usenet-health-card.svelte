@@ -1,8 +1,8 @@
 <script lang="ts">
-    import { Badge } from "$lib/components/ui/badge/index.js";
-    import { gqlClient } from "$lib/graphql-client";
-    import { relativeTime } from "$lib/helpers";
-    import type { UsenetTitleHealth, UsenetTitleHealthSummary } from "$lib/gql/schema";
+    import { Badge } from "#lib/components/ui/badge/index.js";
+    import { gqlClient } from "#lib/graphql-client.js";
+    import { relativeTime } from "#lib/helpers.js";
+    import type { UsenetTitleHealth, UsenetTitleHealthSummary } from "#lib/gql/schema.js";
 
     let { titles, summary }: { titles: UsenetTitleHealth[]; summary: UsenetTitleHealthSummary } =
         $props();
@@ -28,7 +28,8 @@
     const rowKey = (t: UsenetTitleHealth) => `${t.infoHash}:${t.fileIndex}`;
 
     // Items needing a re-grab (re-scrape): confirmed-broken or never-ingested.
-    const needsRegrab = (status: string) => status === "unhealthy" || status === "not_ingested";
+    const needsRegrab = (status: string) =>
+        status === "unhealthy" || status === "not_media" || status === "not_ingested";
 
     // Surface the actionable rows (anything not confirmed healthy), worst-first
     // (the backend already orders them).
@@ -38,6 +39,7 @@
     function statusBadge(status: string) {
         if (status === "unhealthy")
             return { label: "Missing data", variant: "destructive" as const };
+        if (status === "not_media") return { label: "Not media", variant: "destructive" as const };
         if (status === "not_ingested")
             return { label: "Not ingested", variant: "destructive" as const };
         if (status === "unknown") return { label: "Unverified", variant: "secondary" as const };
@@ -84,6 +86,9 @@
                 {#if summary.unhealthy > 0}
                     · <span class="text-red-400">{summary.unhealthy} missing data</span>
                 {/if}
+                {#if summary.notMedia > 0}
+                    · <span class="text-red-400">{summary.notMedia} not media</span>
+                {/if}
                 {#if summary.notIngested > 0}
                     · <span class="text-red-400">{summary.notIngested} not ingested</span>
                 {/if}
@@ -103,8 +108,8 @@
     {:else}
         <div class="flex flex-col">
             {#each problems as t (`${t.infoHash}:${t.fileIndex}`)}
-                {@const badge = statusBadge(t.status)}
-                {@const state = action[`${t.infoHash}:${t.fileIndex}`]}
+                {const badge = $derived(statusBadge(t.status))}
+                {const state = $derived(action[`${t.infoHash}:${t.fileIndex}`])}
                 <div class="border-border/60 flex items-center gap-3 border-b py-2.5">
                     <div
                         class="h-14 w-10 shrink-0 overflow-hidden rounded border border-white/8 bg-white/[0.04]">
@@ -128,6 +133,8 @@
                             checked {t.checkedAt ? relativeTime(t.checkedAt * 1000) : "never"}
                             {#if t.status === "unhealthy" && t.sampledSegments > 0}
                                 · {t.missingPct.toFixed(1)}% of {t.sampledSegments} sampled missing
+                            {:else if t.status === "not_media"}
+                                · articles present, but not a video file
                             {:else if t.status === "not_ingested"}
                                 · no segment map — re-grab to re-ingest
                             {:else if t.status === "unknown"}

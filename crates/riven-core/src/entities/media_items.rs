@@ -76,6 +76,11 @@ pub struct Model {
     /// `get_pending_items_for_retry`'s automatic re-scrape loop, since the
     /// user has already made the pick that loop exists to make on its own.
     pub manual_scrape_only: bool,
+    /// Episode numbering release groups use (TheXEM), when it is known.
+    #[graphql(skip)]
+    pub scene_season_number: Option<i32>,
+    #[graphql(skip)]
+    pub scene_episode_number: Option<i32>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

@@ -4,12 +4,13 @@ import type {
 	IndexerStats,
 	LibraryStats,
 	NntpProviderHealth,
+	SettingsSection,
 	UsenetStreamingHealth,
 	UsenetTitleHealth,
 	UsenetTitleHealthSummary,
 	UsenetTraffic,
 	YearRelease,
-} from "$lib/gql/schema";
+} from "#lib/gql/schema.js";
 
 // Shared by the load (initial fetch) and the page (live refresh / polling).
 // Every selection below is the full field set of its schema type, so the
@@ -127,6 +128,7 @@ export const USENET_HEALTH_QUERY = `
         usenetTitleHealthSummary {
             healthy
             unhealthy
+            notMedia
             notIngested
             unknown
             total
@@ -160,6 +162,7 @@ export type UsenetHealthResult = {
 export const EMPTY_TITLE_SUMMARY: UsenetTitleHealthSummary = {
 	healthy: 0,
 	unhealthy: 0,
+	notMedia: 0,
 	notIngested: 0,
 	unknown: 0,
 	total: 0,
@@ -194,3 +197,25 @@ export const DEBRID_ACCOUNT_INFO_QUERY = `
 `;
 
 export type DebridAccountInfoResult = { debridAccountInfo: DebridUserInfo[] };
+
+// Each enabled plugin and whether it passed validation (`valid` is the
+// registry's "active" flag); feeds the Service Status card.
+export const SERVICE_STATUS_QUERY = `
+    query {
+        settingsSections {
+            title
+            kind
+            enabled
+            valid
+        }
+    }
+`;
+
+export type ServiceStatusResult = {
+	settingsSections: Pick<
+		SettingsSection,
+		"title" | "kind" | "enabled" | "valid"
+	>[];
+};
+
+export type ServiceStatuses = Record<string, boolean | null>;
