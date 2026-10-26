@@ -40,6 +40,20 @@ pub async fn start(job: &IndexJob, queue: &JobQueue) {
             "index: no metadata provider is enabled, so this item cannot be indexed"
         );
     }
+    // Every child was skipped: each provider already has a request for this
+    // item queued or running (or the item is gone). That request will apply
+    // the result, so this one must not count as a failure or reschedule.
+    if !outcomes.is_empty()
+        && outcomes
+            .iter()
+            .all(|(_, outcome)| matches!(outcome, crate::jobs::HookOutcome::Skipped))
+    {
+        tracing::debug!(
+            id,
+            "index: already in flight; leaving it to the queued request"
+        );
+        return;
+    }
     // Every provider erroring or rate-limiting is an infrastructure problem,
     // not "nothing recognises this item": it must not cost a failed attempt or
     // a 24h deferral.

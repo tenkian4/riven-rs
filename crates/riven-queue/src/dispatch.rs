@@ -79,13 +79,32 @@ impl JobQueue {
                 plugin_name: plugin.clone(),
                 event: event.clone(),
             };
+            let claim_key = (event_type == EventType::MediaItemIndexRequested)
+                .then(|| event.media_item_id())
+                .flatten()
+                .map(|id| dedup::index_child_key(&plugin, event_type.slug(), id));
             Some(async move {
+                // An index child for this (plugin, item) that is still queued
+                // or running already answers this request. Without this, a
+                // stalled hook worker let every library sweep stack another
+                // child on top: ~82k duplicate jobs for 13 items, enough to
+                // overflow apalis-redis's Lua `unpack` and wedge the queue.
+                // `Skipped` tells the caller the request is already in flight.
+                if let Some(key) = &claim_key
+                    && !self.claim_hook_child(key).await
+                {
+                    tracing::debug!(plugin = %plugin, key, "index child already in flight; not queuing another");
+                    return (plugin, HookOutcome::Skipped);
+                }
                 // Explicit task id: apalis's sink invents one otherwise and
                 // never reports it back, and the id is the wait handle.
                 let task_id = TaskId::from_ulid(Ulid::generate());
                 let task = TaskBuilder::new(job).task_id(task_id.clone()).build();
                 if let Err(e) = storage.clone().push_task(task).await {
                     tracing::error!(plugin = %plugin, ?event_type, error = %e, "failed to push plugin-hook job");
+                    if let Some(key) = &claim_key {
+                        self.release_hook_child(key).await;
+                    }
                     return (plugin, HookOutcome::Failed);
                 }
                 let outcome = wait_for_hook_outcome(&storage, task_id, &plugin).await;
@@ -255,6 +274,28 @@ impl JobQueue {
             .ok()
             .flatten()
             .is_some()
+    }
+
+    /// SET NX for an index child. The TTL outlives the orchestrator's own wait
+    /// so a lost child (purged, crashed worker) stops blocking re-requests
+    /// soon after; normal completion deletes the key via `DedupGuard`.
+    async fn claim_hook_child(&self, key: &str) -> bool {
+        let mut conn = self.redis.clone();
+        redis::cmd("SET")
+            .arg(key)
+            .arg(1u8)
+            .arg("NX")
+            .arg("EX")
+            .arg(HOOK_COLLECT_TIMEOUT_SECS * 2)
+            .query_async::<Option<String>>(&mut conn)
+            .await
+            // A Redis error must not block indexing: fall through and push.
+            .map_or(true, |reply| reply.is_some())
+    }
+
+    async fn release_hook_child(&self, key: &str) {
+        let mut conn = self.redis.clone();
+        let _result: Result<(), _> = redis::cmd("DEL").arg(key).query_async(&mut conn).await;
     }
 
     async fn push_deduped<F, Fut, E>(&self, prefix: &str, id: i64, label: &'static str, push: F)

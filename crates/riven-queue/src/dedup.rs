@@ -21,7 +21,16 @@ pub struct DedupGuard {
     redis: redis::aio::ConnectionManager,
 }
 
+/// Dedup key for one in-flight index plugin-hook child, per (plugin, item).
+pub(crate) fn index_child_key(plugin: &str, event_slug: &str, id: i64) -> String {
+    format!("riven:dedup:hook:{plugin}:{event_slug}:{id}")
+}
+
 impl DedupGuard {
+    pub(crate) fn with_key(key: String, redis: redis::aio::ConnectionManager) -> Self {
+        Self { key, redis }
+    }
+
     pub(crate) fn new(prefix: &'static str, id: i64, redis: redis::aio::ConnectionManager) -> Self {
         Self {
             key: crate::dedup_key(prefix, id),

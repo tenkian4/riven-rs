@@ -83,6 +83,17 @@ async fn handle_plugin_hook_job(
     q: Data<Arc<JobQueue>>,
 ) -> Result<HookOutcome, BoxDynError> {
     let event_type = job.event.event_type();
+    // Pairs with the claim in `fan_out_and_collect`: freed on any exit so the
+    // item can be re-requested once this child is done.
+    let _index_child_guard = (event_type == EventType::MediaItemIndexRequested)
+        .then(|| job.event.media_item_id())
+        .flatten()
+        .map(|id| {
+            DedupGuard::with_key(
+                crate::dedup::index_child_key(&job.plugin_name, event_type.slug(), id),
+                q.redis.clone(),
+            )
+        });
     match event_type.dispatch_strategy() {
         DispatchStrategy::Broadcast => handle_broadcast(&job, &q).await,
         DispatchStrategy::FanIn => Ok(handle_fan_in(&job, &q).await),
