@@ -8,15 +8,52 @@ impl JobQueue {
             return;
         }
         let id = job.id;
-        let task_id = scheduled_index_task_id(id);
+        let task_id = self.pick_scheduled_index_task_id(id).await;
         self.schedule_apalis_task("index", id, &self.index_storage, task_id, job, run_at)
             .await;
     }
 
     pub async fn clear_scheduled_index(&self, id: i64) {
-        let task_id = scheduled_index_task_id(id).to_string();
-        self.clear_apalis_scheduled_task("index", id, self.index_storage.get_config(), &task_id)
+        for task_id in [scheduled_index_task_id(id), scheduled_index_alt_task_id(id)] {
+            self.clear_apalis_scheduled_task(
+                "index",
+                id,
+                self.index_storage.get_config(),
+                &task_id.to_string(),
+            )
             .await;
+        }
+    }
+
+    /// Choose which of the item's two task ids to schedule under: one that is
+    /// already scheduled (so "earliest wins" still applies), otherwise the
+    /// primary unless the primary is live — job data present but not
+    /// scheduled means a worker is running it right now, and overwriting it
+    /// would orphan the new schedule when that run is acknowledged.
+    async fn pick_scheduled_index_task_id(&self, id: i64) -> Ulid {
+        let primary = scheduled_index_task_id(id);
+        let alt = scheduled_index_alt_task_id(id);
+        let config = self.index_storage.get_config();
+        let mut conn = self.redis.clone();
+        for candidate in [primary, alt] {
+            let scheduled: Option<i64> = redis::cmd("ZSCORE")
+                .arg(config.scheduled_jobs_set())
+                .arg(candidate.to_string())
+                .query_async(&mut conn)
+                .await
+                .ok()
+                .flatten();
+            if scheduled.is_some() {
+                return candidate;
+            }
+        }
+        let primary_live: bool = redis::cmd("HEXISTS")
+            .arg(config.job_data_hash())
+            .arg(primary.to_string())
+            .query_async(&mut conn)
+            .await
+            .unwrap_or(false);
+        if primary_live { alt } else { primary }
     }
 
     /// Force-overwrite a scheduled task: clear any prior entry for this

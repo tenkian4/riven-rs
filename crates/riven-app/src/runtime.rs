@@ -101,6 +101,7 @@ async fn run_worker_monitor(
         let maintenance = async {
             riven_queue::purge_orphaned_worker_sets(&mut redis, &queues).await;
             riven_queue::purge_stale_dedup_keys(&mut redis).await;
+            riven_queue::purge_orphaned_tasks(&mut redis, &queues).await;
         };
         if tokio::time::timeout(MAINTENANCE_TIMEOUT, maintenance)
             .await

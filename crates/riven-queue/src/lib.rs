@@ -45,7 +45,7 @@ pub use jobs::{
     ProcessStep, RankStreamsJob, ScrapeJob,
 };
 pub use maintenance::{
-    migrate_from_apalis_rc, prune_queue_history, purge_orphaned_worker_sets,
+    migrate_from_apalis_rc, prune_queue_history, purge_orphaned_tasks, purge_orphaned_worker_sets,
     purge_stale_dedup_keys, reconcile_library_profiles,
 };
 pub use workers::start_workers;
@@ -112,6 +112,18 @@ fn dedup_key(prefix: &str, id: i64) -> String {
 
 const SCHEDULED_INDEX_TASK_NAMESPACE: u128 = 0x524956454e494e44_0000000000000000;
 
+/// Second namespace for an item's scheduled index task. A running scheduled
+/// task re-schedules itself (index retry, next reindex) while its own id is
+/// still live; reusing that id lets the running task's acknowledgement delete
+/// the data the new schedule just wrote, leaving a scheduled entry with no job
+/// data that crash-loops the worker. The schedule alternates between the two
+/// ids so a live task is never overwritten.
+const SCHEDULED_INDEX_ALT_TASK_NAMESPACE: u128 = 0x524956454e494e45_0000000000000000;
+
 fn scheduled_index_task_id(id: i64) -> Ulid {
     Ulid::from(SCHEDULED_INDEX_TASK_NAMESPACE | u128::from(id.cast_unsigned()))
+}
+
+fn scheduled_index_alt_task_id(id: i64) -> Ulid {
+    Ulid::from(SCHEDULED_INDEX_ALT_TASK_NAMESPACE | u128::from(id.cast_unsigned()))
 }

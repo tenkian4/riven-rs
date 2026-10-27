@@ -22,7 +22,10 @@ use tokio::sync::broadcast;
 use crate::application::process_media_item::{fan_out_to_children, push_requested_seasons};
 use crate::context;
 use crate::lifecycle::{enqueue_after_request_action, retry_item_request, sync_item_request_state};
-use crate::{IndexJob, JobQueue, ProcessMediaItemJob, ProcessStep, scheduled_index_task_id};
+use crate::{
+    IndexJob, JobQueue, ProcessMediaItemJob, ProcessStep, scheduled_index_alt_task_id,
+    scheduled_index_task_id,
+};
 
 /// Outcome of [`MainOrchestrator::needs_reindex`]'s eligibility check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -367,7 +370,10 @@ impl MainOrchestrator {
 
         let missing_ids: Vec<i64> = candidate_ids
             .into_iter()
-            .filter(|id| !existing.contains(&scheduled_index_task_id(*id).to_string()))
+            .filter(|id| {
+                !existing.contains(&scheduled_index_task_id(*id).to_string())
+                    && !existing.contains(&scheduled_index_alt_task_id(*id).to_string())
+            })
             .collect();
         if missing_ids.is_empty() {
             return;

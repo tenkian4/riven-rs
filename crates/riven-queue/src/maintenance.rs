@@ -120,6 +120,100 @@ pub async fn purge_orphaned_worker_sets(
     }
 }
 
+/// Remove queue entries whose job data is gone: ids still in a queue's
+/// scheduled set, active list or a worker's in-flight set, with no payload in
+/// the data hash. apalis-redis hands such an id to the worker as a nil payload
+/// ("Invalid job data format"), which ends the worker on every poll, so one
+/// stale entry wedges its whole queue until someone deletes it by hand. Runs
+/// before any worker starts, so nothing here is legitimately mid-flight.
+pub async fn purge_orphaned_tasks(redis: &mut redis::aio::ConnectionManager, queues: &[String]) {
+    for queue in queues {
+        let config = Config::default().queue(queue);
+        let data = config.job_data_hash();
+        let mut ids: Vec<(String, String, Kind)> = Vec::new();
+
+        let scheduled: Vec<String> = redis::cmd("ZRANGE")
+            .arg(config.scheduled_jobs_set())
+            .arg(0i64)
+            .arg(-1i64)
+            .query_async(redis)
+            .await
+            .unwrap_or_default();
+        ids.extend(
+            scheduled
+                .into_iter()
+                .map(|id| (config.scheduled_jobs_set(), id, Kind::Zset)),
+        );
+        let active: Vec<String> = redis::cmd("LRANGE")
+            .arg(config.active_jobs_list())
+            .arg(0i64)
+            .arg(-1i64)
+            .query_async(redis)
+            .await
+            .unwrap_or_default();
+        ids.extend(
+            active
+                .into_iter()
+                .map(|id| (config.active_jobs_list(), id, Kind::List)),
+        );
+        let workers: Vec<String> = redis::cmd("ZRANGE")
+            .arg(config.workers_set())
+            .arg(0i64)
+            .arg(-1i64)
+            .query_async(redis)
+            .await
+            .unwrap_or_default();
+        for worker in workers {
+            let key = format!("{}:{worker}", config.inflight_jobs_set());
+            let members: Vec<String> = redis::cmd("SMEMBERS")
+                .arg(&key)
+                .query_async(redis)
+                .await
+                .unwrap_or_default();
+            ids.extend(members.into_iter().map(|id| (key.clone(), id, Kind::Set)));
+        }
+
+        let mut removed = 0usize;
+        for (key, id, kind) in ids {
+            let has_data: bool = redis::cmd("HEXISTS")
+                .arg(&data)
+                .arg(&id)
+                .query_async(redis)
+                .await
+                .unwrap_or(true);
+            if has_data {
+                continue;
+            }
+            let mut cmd = match kind {
+                Kind::Zset => redis::cmd("ZREM"),
+                Kind::Set => redis::cmd("SREM"),
+                Kind::List => {
+                    let mut c = redis::cmd("LREM");
+                    c.arg(&key).arg(0).arg(&id);
+                    let _result: Result<(), _> = c.query_async(redis).await;
+                    removed += 1;
+                    continue;
+                }
+            };
+            let _result: Result<(), _> = cmd.arg(&key).arg(&id).query_async(redis).await;
+            removed += 1;
+        }
+        if removed > 0 {
+            tracing::warn!(
+                queue,
+                removed,
+                "removed queue entries that had no job data (they would crash-loop the worker)"
+            );
+        }
+    }
+}
+
+enum Kind {
+    Zset,
+    Set,
+    List,
+}
+
 const COMPLETED_JOB_MAX_AGE_SECS: u64 = 60 * 60 * 6;
 const DEAD_JOB_MAX_AGE_SECS: u64 = 60 * 60 * 24;
 const COMPLETED_JOB_MAX_COUNT: usize = 500;
