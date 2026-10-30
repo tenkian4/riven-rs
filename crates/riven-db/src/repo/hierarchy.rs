@@ -600,6 +600,33 @@ fn item_filters(
     (sql, values)
 }
 
+/// The `sort` that orders items by their most recent download, newest first.
+/// Unlike the other sorts it also narrows the list: an item with nothing
+/// downloaded has no place in it.
+pub const SORT_DOWNLOADED_DESC: &str = "downloaded_desc";
+
+/// Each item's newest media file, keyed by item id. A file counts for the item
+/// it belongs to and for that item's parent and grandparent, so an episode's
+/// download also dates its season and its show — the show is what a "recently
+/// downloaded" row shows.
+const LATEST_DOWNLOADS: &str = "SELECT ancestor.id AS item_id, MAX(fe.created_at) AS downloaded_at \
+     FROM filesystem_entries fe \
+     JOIN media_items fe_item ON fe_item.id = fe.media_item_id \
+     LEFT JOIN media_items fe_parent ON fe_parent.id = fe_item.parent_id \
+     CROSS JOIN LATERAL (VALUES (fe_item.id), (fe_item.parent_id), (fe_parent.parent_id)) \
+       AS ancestor(id) \
+     WHERE fe.entry_type = 'media' AND ancestor.id IS NOT NULL \
+     GROUP BY ancestor.id";
+
+/// The join that restricts a list/count query to downloaded items, or nothing.
+fn downloads_join(downloaded_only: bool) -> String {
+    if downloaded_only {
+        format!(" JOIN ({LATEST_DOWNLOADS}) downloads ON downloads.item_id = media_items.id")
+    } else {
+        String::new()
+    }
+}
+
 pub async fn list_items_paginated(
     page: i64,
     limit: i64,
@@ -616,10 +643,13 @@ pub async fn list_items_paginated(
     let offset = (page - 1) * limit;
     let (filters, values) = item_filters(types.as_deref(), search.as_deref(), states.as_deref());
 
+    let downloads = downloads_join(sort.as_deref() == Some(SORT_DOWNLOADED_DESC));
     let order = match sort.as_deref() {
         Some("date_asc") => "ORDER BY media_items.created_at ASC NULLS LAST",
         Some("title_asc") => "ORDER BY media_items.title ASC",
         Some("title_desc") => "ORDER BY media_items.title DESC",
+        // Tie-broken on id so paging is stable when one batch lands together.
+        Some(SORT_DOWNLOADED_DESC) => "ORDER BY downloads.downloaded_at DESC, media_items.id DESC",
         _ => "ORDER BY media_items.created_at DESC NULLS LAST",
     };
     // `limit`/`offset` are clamped integers (not user text); inlining them is safe.
@@ -644,7 +674,8 @@ pub async fn list_items_paginated(
          LEFT JOIN media_items resolved_show \
            ON (media_items.item_type = 'show' AND resolved_show.id = media_items.id) \
            OR (media_items.item_type = 'season' AND resolved_show.id = media_items.parent_id) \
-           OR (media_items.item_type = 'episode' AND resolved_show.id = parent_season.parent_id) \
+           OR (media_items.item_type = 'episode' AND resolved_show.id = parent_season.parent_id)\
+         {downloads} \
          WHERE 1=1{filters} {order} LIMIT {limit} OFFSET {offset}"
     );
     Ok(
@@ -662,9 +693,11 @@ pub async fn count_items_filtered(
     types: Option<Vec<MediaItemType>>,
     search: Option<String>,
     states: Option<Vec<MediaItemState>>,
+    downloaded_only: bool,
 ) -> Result<i64> {
     let (filters, values) = item_filters(types.as_deref(), search.as_deref(), states.as_deref());
-    let sql = format!("SELECT COUNT(*) AS count FROM media_items WHERE 1=1{filters}");
+    let downloads = downloads_join(downloaded_only);
+    let sql = format!("SELECT COUNT(*) AS count FROM media_items{downloads} WHERE 1=1{filters}");
     let row = orm()
         .query_one_raw(Statement::from_sql_and_values(
             DbBackend::Postgres,

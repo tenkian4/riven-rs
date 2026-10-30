@@ -6,6 +6,8 @@
     import { Button } from "#lib/components/ui/button/index.js";
     import { MediaListStore, type BaseListItem } from "#lib/services/lists-cache.svelte.js";
     import PageShell from "#lib/components/page-shell.svelte";
+    import HomeLanguageFilter from "#lib/components/home-language-filter.svelte";
+    import { HomeLanguages } from "#lib/services/home-languages.svelte.js";
     import { fly } from "svelte/transition";
     import { cubicOut } from "svelte/easing";
     import { subscribeToRivenMediaEvents } from "#lib/services/riven-live-updates.js";
@@ -15,7 +17,8 @@
         mapRecentItemsPage,
         RECENT_ITEMS_QUERY,
         type RecentListItem,
-        type RecentItemsResponse
+        type RecentItemsResponse,
+        type RecentItemsSort
     } from "#lib/services/recent-items.js";
 
     let { data }: { data: PageData } = $props();
@@ -23,22 +26,33 @@
     const viewAllButtonClass =
         "text-muted-foreground border-white/10 bg-black/20 hover:bg-black/40 hover:text-foreground h-9 w-24 rounded-xl border text-xs font-bold backdrop-blur-md shadow-inner transition-all";
 
+    const recentItemsStore = (key: string, sort: RecentItemsSort, initialData: RecentListItem[]) =>
+        new MediaListStore<RecentListItem>({
+            key,
+            noCache: true,
+            initialData,
+            loader: async (page) => {
+                const recentData = await gqlClient<RecentItemsResponse>(
+                    RECENT_ITEMS_QUERY,
+                    getRecentItemsVariables(page, sort)
+                );
+                return mapRecentItemsPage(recentData).items;
+            }
+        });
     // svelte-ignore state_referenced_locally
-    const recentlyAddedStore = new MediaListStore<RecentListItem>({
-        key: "recentlyAdded",
-        noCache: true,
-        initialData: data.recentlyAdded,
-        loader: async (page) => {
-            const recentData = await gqlClient<RecentItemsResponse>(
-                RECENT_ITEMS_QUERY,
-                getRecentItemsVariables(page)
-            );
-            return mapRecentItemsPage(recentData).items;
-        }
-    });
+    const recentlyAddedStore = recentItemsStore("recentlyAdded", "date_desc", data.recentlyAdded);
+    // svelte-ignore state_referenced_locally
+    const recentlyDownloadedStore = recentItemsStore(
+        "recentlyDownloaded",
+        "downloaded_desc",
+        data.recentlyDownloaded
+    );
+
+    // svelte-ignore state_referenced_locally
+    const languageFilter = new HomeLanguages(data.user?.id);
     const TRENDING_QUERY = `query TrendingTmdb($type: String!, $timeWindow: String!, $page: Int) {
         trendingTmdb(type: $type, timeWindow: $timeWindow, page: $page) {
-            results { id title posterPath mediaType year popularity }
+            results { id title posterPath mediaType year popularity originalLanguage }
         }
     }`;
     const ANILIST_TRENDING_QUERY = `query TrendingAnilist($page: Int!, $perPage: Int) {
@@ -54,6 +68,7 @@
         mediaType?: string;
         year?: number;
         popularity?: number;
+        originalLanguage?: string | null;
     };
     type TrendingResponse = { trendingTmdb: { results: TrendingResult[] } };
     const mapTrending = (d: TrendingResponse) => d.trendingTmdb.results;
@@ -97,8 +112,42 @@
     });
 
     $effect(() => {
-        return subscribeToRivenMediaEvents(() => recentlyAddedStore.refresh());
+        return subscribeToRivenMediaEvents(() => {
+            recentlyAddedStore.refresh();
+            recentlyDownloadedStore.refresh();
+        });
     });
+
+    // The anime row is left out: AniList titles are Japanese by definition, so
+    // a language filter would only ever empty it.
+    const nowPlaying = $derived(data.nowPlaying.filter((item) => languageFilter.allows(item)));
+    const trendingMovies = $derived(
+        trendingMoviesStore.items.filter((item) => languageFilter.allows(item))
+    );
+    const trendingShows = $derived(
+        trendingShowsStore.items.filter((item) => languageFilter.allows(item))
+    );
+
+    // A filtered row can be left with a handful of titles out of a 20-item
+    // page, or none — and an empty row renders as loading skeletons. Fetch
+    // further pages until it fills, within a bound, since a rare language may
+    // never reach the target.
+    const FILTERED_ROW_TARGET = 12;
+    const FILTERED_ROW_MAX_ITEMS = 100;
+    function topUp(store: MediaListStore<BaseListItem>, visible: number) {
+        if (
+            languageFilter.active &&
+            store.initialized &&
+            !store.loading &&
+            store.hasMore &&
+            visible < FILTERED_ROW_TARGET &&
+            store.items.length < FILTERED_ROW_MAX_ITEMS
+        ) {
+            store.loadMore();
+        }
+    }
+    $effect(() => topUp(trendingMoviesStore, trendingMovies.length));
+    $effect(() => topUp(trendingShowsStore, trendingShows.length));
 </script>
 
 {#snippet listHeading(title: string)}
@@ -132,18 +181,35 @@
         <div
             in:fly|global={{ y: 20, duration: 400, delay: 0, easing: cubicOut }}
             class="w-full px-4 md:px-8">
-            <TmdbNowPlaying
-                data={data.nowPlaying}
-                heightClass="h-[50vh] min-h-[500px] max-h-[800px]" />
+            <!-- Remounted on a filter change: the carousel keeps its own slide
+                 index, which a shorter list would leave pointing past the end. -->
+            {#key languageFilter.languages.join()}
+                <TmdbNowPlaying
+                    data={nowPlaying}
+                    heightClass="h-[50vh] min-h-[500px] max-h-[800px]" />
+            {/key}
         </div>
 
         <div class="mx-auto flex w-full max-w-600 flex-col gap-12 px-6 md:px-12 lg:px-16">
+            <div class="-mb-8 flex justify-end">
+                <HomeLanguageFilter filter={languageFilter} />
+            </div>
+
             {#if recentlyAddedStore.items.length}
                 <div
                     class="flex flex-col gap-4"
                     in:fly|global={{ y: 20, duration: 400, delay: 100, easing: cubicOut }}>
                     {@render listHeading("Recently Added")}
                     <ListCarousel data={recentlyAddedStore.items} />
+                </div>
+            {/if}
+
+            {#if recentlyDownloadedStore.items.length}
+                <div
+                    class="flex flex-col gap-4"
+                    in:fly|global={{ y: 20, duration: 400, delay: 125, easing: cubicOut }}>
+                    {@render listHeading("Recently Downloaded")}
+                    <ListCarousel data={recentlyDownloadedStore.items} />
                 </div>
             {/if}
 
@@ -167,7 +233,7 @@
                             href="/lists/trending/movie">View All</Button>
                     </div>
                 </div>
-                <ListCarousel data={trendingMoviesStore.items} />
+                <ListCarousel data={trendingMovies} />
             </div>
 
             <div
@@ -188,7 +254,7 @@
                             >View All</Button>
                     </div>
                 </div>
-                <ListCarousel data={trendingShowsStore.items} />
+                <ListCarousel data={trendingShows} />
             </div>
 
             <div

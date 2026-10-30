@@ -141,6 +141,9 @@ impl MediaQuery {
             .collect())
     }
 
+    /// `sort` is one of `date_desc` (default), `date_asc`, `title_asc`,
+    /// `title_desc` or `downloaded_desc` — the last orders by each item's
+    /// newest download and leaves out items with nothing downloaded.
     async fn items(
         &self,
         _ctx: &Context<'_>,
@@ -153,6 +156,7 @@ impl MediaQuery {
     ) -> Result<ItemsPage> {
         let page = page.unwrap_or(1);
         let limit = limit.unwrap_or(20);
+        let downloaded_only = sort.as_deref() == Some(repo::SORT_DOWNLOADED_DESC);
         let items = repo::list_items_paginated(
             page,
             limit,
@@ -162,7 +166,8 @@ impl MediaQuery {
             states.clone(),
         )
         .await?;
-        let total_items = repo::count_items_filtered(types, search, states).await?;
+        let total_items =
+            repo::count_items_filtered(types, search, states, downloaded_only).await?;
         let total_pages = ((total_items + limit - 1) / limit).max(1);
         Ok(ItemsPage {
             items,

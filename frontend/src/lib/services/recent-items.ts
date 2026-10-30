@@ -56,11 +56,20 @@ export interface RecentListItem {
 	[key: string]: unknown;
 }
 
-export function getRecentItemsVariables(page = 1) {
+/**
+ * `date_desc` lists items by when they were added to riven; `downloaded_desc`
+ * by their newest download, leaving out anything not yet downloaded.
+ */
+export type RecentItemsSort = "date_desc" | "downloaded_desc";
+
+export function getRecentItemsVariables(
+	page = 1,
+	sort: RecentItemsSort = "date_desc",
+) {
 	return {
 		page,
 		limit: 15,
-		sort: "date_desc",
+		sort,
 		types: ["MOVIE", "SHOW"],
 	};
 }

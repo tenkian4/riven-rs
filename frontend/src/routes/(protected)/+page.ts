@@ -8,6 +8,7 @@ import {
 	RECENT_ITEMS_QUERY,
 	type RecentListItem,
 	type RecentItemsResponse,
+	type RecentItemsSort,
 } from "#lib/services/recent-items.js";
 
 const logger = createScopedLogger("home");
@@ -22,16 +23,24 @@ export const load: PageLoad = async () => {
 			page: 1,
 		});
 
-		let recentlyAdded: RecentListItem[] = [];
-		try {
-			const recentData = await gqlClient<RecentItemsResponse>(
-				RECENT_ITEMS_QUERY,
-				getRecentItemsVariables(),
-			);
-			recentlyAdded = mapRecentItemsPage(recentData).items;
-		} catch (err) {
-			logger.error("Error fetching recently added data:", err);
-		}
+		const fetchRecent = async (
+			sort: RecentItemsSort,
+		): Promise<RecentListItem[]> => {
+			try {
+				const recentData = await gqlClient<RecentItemsResponse>(
+					RECENT_ITEMS_QUERY,
+					getRecentItemsVariables(1, sort),
+				);
+				return mapRecentItemsPage(recentData).items;
+			} catch (err) {
+				logger.error(`Error fetching recent items (${sort}):`, err);
+				return [];
+			}
+		};
+		const [recentlyAdded, recentlyDownloaded] = await Promise.all([
+			fetchRecent("date_desc"),
+			fetchRecent("downloaded_desc"),
+		]);
 
 		// Filter to only movies and TV shows with backdrops
 		const tmdbResults = trendingResults;
@@ -41,9 +50,9 @@ export const load: PageLoad = async () => {
 				item.backdropPath,
 		);
 
-		return { nowPlaying: filtered, recentlyAdded };
+		return { nowPlaying: filtered, recentlyAdded, recentlyDownloaded };
 	} catch (err) {
 		logger.error("Error fetching now playing data:", err);
-		return { nowPlaying: [], recentlyAdded: [] };
+		return { nowPlaying: [], recentlyAdded: [], recentlyDownloaded: [] };
 	}
 };

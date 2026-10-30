@@ -1124,6 +1124,11 @@ type QueryRoot {
 	counterpart to `mediaItemStatusesByTmdbIds`, same batching rationale.
 	"""
 	mediaItemStatusesByTvdbIds(tvdbIds: [String!]!): [MediaItemStatus!]!
+	"""
+	`sort` is one of `date_desc` (default), `date_asc`, `title_asc`,
+	`title_desc` or `downloaded_desc` — the last orders by each item's
+	newest download and leaves out items with nothing downloaded.
+	"""
 	items(page: Int, limit: Int, sort: String, types: [MediaItemType!], search: String, states: [MediaItemState!]): ItemsPage!
 	"""
 	Return all quality profiles as an ordered array of
