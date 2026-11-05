@@ -17,13 +17,21 @@ pub enum HookResponse {
     /// stream and try the next best candidate rather than scheduling a retry.
     DownloadStreamUnavailable,
     /// The plugin could not form a verdict on this release at all — it never
-    /// got as far as asking a provider (the handle needed to fetch it is
-    /// missing, the provider is at its own connection limit, …). Unlike
+    /// got as far as asking a provider (the provider is at its own connection
+    /// limit, …). A missing handle is [`HookResponse::DownloadHandleLost`]
+    /// instead, since waiting won't bring it back. Unlike
     /// [`HookResponse::DownloadStreamUnavailable`] this says nothing about
     /// the release, so the download flow must defer the candidate and leave
     /// it un-blacklisted: the two were conflated once, and a week-old URL
     /// cache expiring permanently blacklisted every good release for an item.
     DownloadCandidateUndecidable,
+    /// The release can't be fetched because its handle is gone: an NZB
+    /// stream row scraped before it carried its own URL, whose cached URL has
+    /// since expired. Like [`HookResponse::DownloadCandidateUndecidable`] it
+    /// is no verdict on the release, so it must not be blacklisted — but
+    /// unlike a busy provider, waiting changes nothing. Only a fresh scrape,
+    /// which writes the URL back onto the stream row, makes it fetchable.
+    DownloadHandleLost,
     CacheCheck(Vec<CacheCheckResult>),
     ProviderList(Vec<ProviderInfo>),
     StreamLink(StreamLinkResponse),

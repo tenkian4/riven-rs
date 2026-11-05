@@ -374,16 +374,17 @@ impl Plugin for UsenetPlugin {
             }
             // Nothing was ever asked of the indexer: this release's URL is
             // not on the stream row (scraped before the row carried it) and
-            // the cache entry has expired. Undecidable, not dead — saying
-            // "unavailable" here is what blacklisted every good release for
-            // an item whose streams simply outlived the cache.
+            // the cache entry has expired. Not dead — saying "unavailable"
+            // here is what blacklisted every good release for an item whose
+            // streams simply outlived the cache — and not worth waiting on
+            // either: only a fresh scrape brings the URL back.
             Err(error) if error.is::<LostNzbUrlError>() => {
                 tracing::warn!(
                     info_hash,
                     media_item_id = id,
-                    "no NZB URL left for this release; deferring instead of judging it"
+                    "no NZB URL left for this release; it needs a fresh scrape to be fetchable"
                 );
-                return Ok(HookResponse::DownloadCandidateUndecidable);
+                return Ok(HookResponse::DownloadHandleLost);
             }
             // The fetch was rate-limited, which says nothing about the
             // release. Propagate so the download job requeues; answering

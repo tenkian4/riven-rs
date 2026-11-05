@@ -94,24 +94,27 @@ async fn handle_scrape(item: &MediaItem, queue: &JobQueue) {
         }
     }
 
+    match scrape_job_for(item).await {
+        Some(scrape) => queue.push_scrape(scrape).await,
+        None => fan_out_to_children(item, queue).await,
+    }
+}
+
+/// The scrape job for a movie, season or episode. `None` for a show, which
+/// is scraped through its seasons and episodes rather than as a whole.
+pub(crate) async fn scrape_job_for(item: &MediaItem) -> Option<ScrapeJob> {
     match item.item_type {
-        MediaItemType::Movie => {
-            queue.push_scrape(ScrapeJob::for_movie(item)).await;
-        }
+        MediaItemType::Movie => Some(ScrapeJob::for_movie(item)),
         MediaItemType::Season | MediaItemType::Episode => {
             let ctx = load_show_context(item).await;
-            queue
-                .push_scrape(ScrapeJob::for_episode_or_season(
-                    item,
-                    ctx.title,
-                    ctx.imdb_id,
-                    ctx.tvdb_id,
-                ))
-                .await;
+            Some(ScrapeJob::for_episode_or_season(
+                item,
+                ctx.title,
+                ctx.imdb_id,
+                ctx.tvdb_id,
+            ))
         }
-        MediaItemType::Show => {
-            fan_out_to_children(item, queue).await;
-        }
+        MediaItemType::Show => None,
     }
 }
 
