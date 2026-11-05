@@ -646,12 +646,13 @@ async fn handle_newz_download(
     if nzb_url.is_empty() {
         // No URL means no store was ever asked about this release, so there
         // is no verdict to report — answering "unavailable" here would get a
-        // perfectly good release permanently blacklisted.
+        // perfectly good release permanently blacklisted. Only a fresh scrape
+        // brings the URL back.
         tracing::warn!(
             info_hash,
-            "no NZB URL left for this release; deferring instead of judging it"
+            "no NZB URL left for this release; it needs a fresh scrape to be fetchable"
         );
-        return Ok(HookResponse::DownloadCandidateUndecidable);
+        return Ok(HookResponse::DownloadHandleLost);
     }
 
     let mut ordered: Vec<(&str, &str)> = stores

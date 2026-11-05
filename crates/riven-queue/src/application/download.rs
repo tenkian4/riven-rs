@@ -14,12 +14,13 @@ use riven_db::entities::{MediaItem, Stream};
 use riven_db::repo;
 use riven_rank::RankSettings;
 
+use crate::application::process_media_item::scrape_job_for;
 use crate::context::{
     DownloadHierarchyContext, load_download_hierarchy_context, load_media_item_or_log,
     notification_tvdb_id,
 };
 use crate::discovery::load_active_profiles;
-use crate::{DownloadJob, JobQueue, RankStreamsJob};
+use crate::{DownloadJob, JobQueue, ProcessMediaItemJob, RankStreamsJob};
 
 use self::persist::finalize_download_success;
 
@@ -102,6 +103,46 @@ pub async fn run_rank_streams(id: i64, job: &RankStreamsJob, queue: &JobQueue) {
 /// "already scraped, try download instead" shortcut keeps retrying the
 /// same failing download every `retry_library()` tick forever, since only
 /// an actual scrape completion stamps `last_scrape_attempt_at`.
+/// Re-scrape an item whose download walk found only candidates with no fetch
+/// handle left. A scrape upserts each release's stream row with the handle it
+/// found, so the same releases come back fetchable. The first such round runs
+/// at once — one scrape normally restores every handle. It is recorded as a
+/// failed attempt all the same, so that if the handles don't come back (the
+/// indexer has dropped the release) later rounds back off on the same
+/// escalating tiers as every other retry instead of looping.
+async fn rescrape_for_lost_handles(item: &MediaItem, queue: &JobQueue) {
+    let prior_failures = item.failed_attempts;
+    record_download_failure(item.id).await;
+
+    let Some(scrape) = scrape_job_for(item).await else {
+        // A show scrapes through its seasons and episodes.
+        queue
+            .push_process_media_item(ProcessMediaItemJob::new(item.id))
+            .await;
+        return;
+    };
+    if prior_failures == 0 {
+        tracing::info!(
+            id = item.id,
+            title = %item.title,
+            "download: candidates had no fetch handle left; re-scraping now to restore them"
+        );
+        queue.push_scrape(scrape).await;
+    } else {
+        let delay = repo::cooldown_for_failed_attempts(prior_failures)
+            .to_std()
+            .unwrap_or(std::time::Duration::from_secs(30 * 60));
+        tracing::info!(
+            id = item.id,
+            title = %item.title,
+            failed_attempts = prior_failures,
+            retry_in_secs = delay.as_secs(),
+            "download: candidates still have no fetch handle after a re-scrape; re-scraping again later"
+        );
+        queue.push_scrape_after(scrape, delay).await;
+    }
+}
+
 async fn record_download_failure(id: i64) {
     if let Err(err) = repo::increment_failed_attempts(id).await {
         tracing::warn!(
@@ -237,6 +278,11 @@ pub async fn run(id: i64, job: &DownloadJob, queue: &JobQueue) {
     // ceiling on purpose: the ladder tops out at 24h, and the only thing a
     // ceiling could add is converting "provider busy for a long time" into a
     // recorded failure.
+    if matches!(outcome, DownloadWalkOutcome::NeedsRescrape) {
+        rescrape_for_lost_handles(&item, queue).await;
+        return;
+    }
+
     if matches!(outcome, DownloadWalkOutcome::Deferred) {
         let backoff = super::scrape::rate_limit_backoff(job.rate_limit_retries);
         tracing::warn!(
@@ -315,9 +361,13 @@ struct WalkDeferred;
 /// events) has already run by the time it returns. `Deferred` means it
 /// stopped early because a service was rate-limited, and none of that
 /// verdict-recording happened: the caller owns requeueing the job.
+/// `NeedsRescrape` means nothing worked and at least one candidate was only
+/// skipped for having no fetch handle left — no requeue can change that, so
+/// the caller re-scrapes the item to write the handles back.
 enum DownloadWalkOutcome {
     Finished,
     Deferred,
+    NeedsRescrape,
 }
 
 struct CacheMemo {
@@ -553,6 +603,7 @@ async fn run_preferred_stream(
         {
             DownloadAttemptOutcome::Failed => continue,
             DownloadAttemptOutcome::Deferred => return DownloadWalkOutcome::Deferred,
+            DownloadAttemptOutcome::HandleLost => return DownloadWalkOutcome::NeedsRescrape,
             DownloadAttemptOutcome::TerminalHandled | DownloadAttemptOutcome::Progressed => {
                 return DownloadWalkOutcome::Finished;
             }
@@ -605,6 +656,7 @@ async fn run_downloads(
     // a deferral no longer aborts the walk; it only ever changes what happens
     // if nothing else works out (see the `!any_success` branch below).
     let mut any_deferred = false;
+    let mut any_handle_lost = false;
     let mut attempted: HashSet<(String, String, Option<String>)> = HashSet::new();
     let attempt_unknown = queue
         .attempt_unknown_downloads
@@ -745,6 +797,13 @@ async fn run_downloads(
                         any_deferred = true;
                         stream_deferred = true;
                     }
+                    // No verdict either, so skipped the same way — but
+                    // tracked apart, since requeueing can't restore a lost
+                    // handle and only a re-scrape can.
+                    DownloadAttemptOutcome::HandleLost => {
+                        any_handle_lost = true;
+                        stream_deferred = true;
+                    }
                     DownloadAttemptOutcome::TerminalHandled | DownloadAttemptOutcome::Succeeded => {
                         done_profiles.insert(profile_name.clone());
                         any_success = true;
@@ -804,6 +863,17 @@ async fn run_downloads(
             "download: every remaining candidate was rate-limited; requeueing rather than judging"
         );
         return DownloadWalkOutcome::Deferred;
+    }
+
+    if !any_success && any_handle_lost {
+        tracing::debug!(
+            id,
+            title = %item.title,
+            candidates = streams.len(),
+            attempts = attempted.len(),
+            "download: nothing worked and some candidates have no fetch handle left; re-scraping rather than judging"
+        );
+        return DownloadWalkOutcome::NeedsRescrape;
     }
 
     if !any_success {
