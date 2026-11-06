@@ -10,6 +10,11 @@ pub struct RivenNotification {
     pub event_type: String,
     pub title: Option<String>,
     pub full_title: Option<String>,
+    /// For an episode or season: the show it belongs to. Its own `title` is
+    /// only the episode or season name.
+    pub show_title: Option<String>,
+    pub season_number: Option<i32>,
+    pub episode_number: Option<i32>,
     pub item_type: Option<String>,
     pub year: Option<i32>,
     pub imdb_id: Option<String>,
@@ -25,10 +30,18 @@ pub struct RivenNotification {
 
 fn notification_from_json(v: &serde_json::Value) -> Option<RivenNotification> {
     let s = |key: &str| v.get(key).and_then(|x| x.as_str()).map(str::to_string);
+    let i = |key: &str| {
+        v.get(key)
+            .and_then(serde_json::Value::as_i64)
+            .and_then(|x| i32::try_from(x).ok())
+    };
     Some(RivenNotification {
         event_type: s("type")?,
         title: s("title"),
         full_title: s("full_title"),
+        show_title: s("show_title"),
+        season_number: i("season_number"),
+        episode_number: i("episode_number"),
         item_type: s("item_type"),
         year: v
             .get("year")
@@ -76,5 +89,39 @@ impl NotificationsSubscription {
         let log_tx = ctx.data::<broadcast::Sender<String>>()?;
         let rx = log_tx.subscribe();
         Ok(broadcast_stream(rx).map(Ok))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::notification_from_json;
+
+    #[test]
+    fn an_episode_notification_carries_its_show() {
+        let n = notification_from_json(&serde_json::json!({
+            "type": "riven.media-item.download.error",
+            "id": 7,
+            "title": "The Garden",
+            "item_type": "Episode",
+            "show_title": "Bob's Burgers",
+            "season_number": 3,
+            "episode_number": 14,
+        }))
+        .expect("a typed event is a notification");
+        assert_eq!(n.title.as_deref(), Some("The Garden"));
+        assert_eq!(n.show_title.as_deref(), Some("Bob's Burgers"));
+        assert_eq!((n.season_number, n.episode_number), (Some(3), Some(14)));
+    }
+
+    #[test]
+    fn a_movie_notification_has_no_show() {
+        let n = notification_from_json(&serde_json::json!({
+            "type": "riven.media-item.download.error",
+            "title": "Nobody 2",
+            "item_type": "Movie",
+        }))
+        .expect("a typed event is a notification");
+        assert_eq!(n.show_title, None);
+        assert_eq!((n.season_number, n.episode_number), (None, None));
     }
 }

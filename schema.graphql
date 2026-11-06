@@ -1304,6 +1304,13 @@ type RivenNotification {
 	eventType: String!
 	title: String
 	fullTitle: String
+	"""
+	For an episode or season: the show it belongs to. Its own `title` is
+	only the episode or season name.
+	"""
+	showTitle: String
+	seasonNumber: Int
+	episodeNumber: Int
 	itemType: String
 	year: Int
 	imdbId: String
