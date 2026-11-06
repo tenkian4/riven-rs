@@ -276,9 +276,11 @@ impl JobQueue {
 
         let event_type = event.event_type();
         if event_type.is_ui_streamed()
-            && let Ok(json) = serde_json::to_string(&event)
+            && self.notification_tx.receiver_count() > 0
+            && let Ok(value) = serde_json::to_value(&event)
         {
-            drop(self.notification_tx.send(json));
+            let value = with_show_context(value).await;
+            drop(self.notification_tx.send(value.to_string()));
         }
 
         let subscribers = self.registry.subscriber_names(event_type).await;
@@ -378,4 +380,40 @@ pub(crate) fn decode_hook_responses<T: DeserializeOwned>(
             _ => None,
         })
         .collect()
+}
+
+/// An episode's or season's own title ("The Garden") says nothing about which
+/// show it belongs to, and that is all a UI notification had to go on. Adds
+/// `show_title`, `season_number` and `episode_number` to such an event's
+/// notification so the UI can name it in full. Anything else — and any event
+/// whose item can no longer be read — passes through unchanged.
+async fn with_show_context(mut value: serde_json::Value) -> serde_json::Value {
+    let is_child = value
+        .get("item_type")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|t| t.eq_ignore_ascii_case("episode") || t.eq_ignore_ascii_case("season"));
+    let Some(id) = value.get("id").and_then(serde_json::Value::as_i64) else {
+        return value;
+    };
+    if !is_child {
+        return value;
+    }
+    let Ok(Some(hierarchy)) = riven_db::repo::get_media_item_hierarchy(id).await else {
+        return value;
+    };
+    if let Some(object) = value.as_object_mut() {
+        object.insert("show_title".into(), hierarchy.resolved_show_title.into());
+        object.insert(
+            "season_number".into(),
+            hierarchy
+                .resolved_season_number
+                .or(hierarchy.item.season_number)
+                .into(),
+        );
+        object.insert(
+            "episode_number".into(),
+            hierarchy.item.episode_number.into(),
+        );
+    }
+    value
 }

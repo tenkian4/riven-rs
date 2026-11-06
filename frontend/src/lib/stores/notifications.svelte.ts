@@ -32,6 +32,9 @@ export type RivenNotificationPayload = {
 	eventType: string;
 	title?: string | null;
 	fullTitle?: string | null;
+	showTitle?: string | null;
+	seasonNumber?: number | null;
+	episodeNumber?: number | null;
 	itemType?: string | null;
 	year?: number | null;
 	imdbId?: string | null;
@@ -47,7 +50,7 @@ export type RivenNotificationPayload = {
 
 const NOTIFICATIONS_SUBSCRIPTION = `subscription {
     notifications {
-        eventType title fullTitle itemType year imdbId tmdbId tvdbId
+        eventType title fullTitle showTitle seasonNumber episodeNumber itemType year imdbId tmdbId tvdbId
         durationSeconds id streamCount count newItems error
     }
 }`;
@@ -67,6 +70,26 @@ function mapItemType(
 		default:
 			return "movie";
 	}
+}
+
+const pad = (n: number) => String(n).padStart(2, "0");
+
+// An episode's or season's own title ("The Garden") doesn't say which show it
+// belongs to, so name it in full when the backend sent the show along:
+// "Bob's Burgers · S03E14 · The Garden" / "Bob's Burgers · Season 3".
+function displayTitle(
+	event: RivenNotificationPayload,
+	fallback: string,
+): string {
+	const own = event.fullTitle ?? event.title ?? fallback;
+	if (!event.showTitle) return own;
+	const season = event.seasonNumber;
+	const episode = event.episodeNumber;
+	if (season != null && episode != null) {
+		return `${event.showTitle} · S${pad(season)}E${pad(episode)} · ${own}`;
+	}
+	if (season != null) return `${event.showTitle} · Season ${season}`;
+	return `${event.showTitle} · ${own}`;
 }
 
 // Errors always get their own notification — every error is distinct.
@@ -90,7 +113,7 @@ function rivenNotificationToNotification(
 	switch (event.eventType) {
 		case "riven.media-item.download.success":
 			return {
-				title: event.fullTitle ?? event.title ?? "Unknown",
+				title: displayTitle(event, "Unknown"),
 				message: `Download complete${event.year ? ` (${event.year})` : ""}`,
 				severity: "success",
 				timestamp: ts,
@@ -107,7 +130,7 @@ function rivenNotificationToNotification(
 
 		case "riven.media-item.scrape.success":
 			return {
-				title: event.title ?? "Unknown",
+				title: displayTitle(event, "Unknown"),
 				message: `Found ${event.streamCount ?? 0} stream(s)`,
 				severity: "success",
 				timestamp: ts,
@@ -119,7 +142,7 @@ function rivenNotificationToNotification(
 
 		case "riven.media-item.index.success":
 			return {
-				title: event.title ?? "Unknown",
+				title: displayTitle(event, "Unknown"),
 				message: "Indexed successfully",
 				severity: "success",
 				timestamp: ts,
@@ -141,7 +164,7 @@ function rivenNotificationToNotification(
 
 		case "riven.media-item.download.error":
 			return {
-				title: event.title ?? "Download failed",
+				title: displayTitle(event, "Download failed"),
 				message: event.error ?? "An error occurred",
 				severity: "error",
 				timestamp: ts,
@@ -153,7 +176,7 @@ function rivenNotificationToNotification(
 
 		case "riven.media-item.scrape.error":
 			return {
-				title: event.title ?? "Scrape failed",
+				title: displayTitle(event, "Scrape failed"),
 				message: event.error ?? "An error occurred",
 				severity: "error",
 				timestamp: ts,
@@ -165,7 +188,7 @@ function rivenNotificationToNotification(
 
 		case "riven.media-item.scrape.error.no-new-streams":
 			return {
-				title: event.title ?? "No streams found",
+				title: displayTitle(event, "No streams found"),
 				message: "No new streams found",
 				severity: "warning",
 				timestamp: ts,

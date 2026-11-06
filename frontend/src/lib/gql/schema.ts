@@ -1326,6 +1326,7 @@ export type RequestItemsResult = {
 export type RivenNotification = {
   count?: Maybe<Scalars['Int']['output']>;
   durationSeconds?: Maybe<Scalars['Float']['output']>;
+  episodeNumber?: Maybe<Scalars['Int']['output']>;
   error?: Maybe<Scalars['String']['output']>;
   eventType: Scalars['String']['output'];
   fullTitle?: Maybe<Scalars['String']['output']>;
@@ -1333,6 +1334,12 @@ export type RivenNotification = {
   imdbId?: Maybe<Scalars['String']['output']>;
   itemType?: Maybe<Scalars['String']['output']>;
   newItems?: Maybe<Scalars['Int']['output']>;
+  seasonNumber?: Maybe<Scalars['Int']['output']>;
+  /**
+   * For an episode or season: the show it belongs to. Its own `title` is
+   * only the episode or season name.
+   */
+  showTitle?: Maybe<Scalars['String']['output']>;
   streamCount?: Maybe<Scalars['Int']['output']>;
   title?: Maybe<Scalars['String']['output']>;
   tmdbId?: Maybe<Scalars['String']['output']>;
