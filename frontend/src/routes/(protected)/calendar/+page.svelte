@@ -216,9 +216,12 @@
         "group/item flex items-center rounded-md border transition-colors",
         compact ? "gap-1.5 truncate px-2 py-1" : "gap-3 p-2.5",
         s.item,
+        // Before `line-through`: both set text-decoration-line, and twMerge
+        // keeps whichever comes last — after it, every linked item lost its
+        // strike-through.
+        href && "no-underline",
         item.last_state === "Completed" && "line-through opacity-60",
-        missed && "ring-1 ring-amber-500/80",
-        href && "no-underline"
+        missed && "ring-1 ring-amber-500/80"
     ))}
     {const title = $derived(compact
         ? `${item.show_title}${item.season ? ` S${item.season}E${item.episode}` : ""}${missed ? " — aired, not downloaded" : ""}`
