@@ -2,9 +2,13 @@ import type { PageLoad } from "./$types";
 import { gqlClient } from "#lib/graphql-client.js";
 import { error } from "@sveltejs/kit";
 
+// Past releases stay on the calendar this long, so one that aired without
+// downloading is still there to notice.
+const HISTORY_DAYS = 30;
+
 const CALENDAR_QUERY = `
-    query Calendar($limit: Int) {
-        calendar(limit: $limit) {
+    query Calendar($limit: Int, $historyDays: Int) {
+        calendar(limit: $limit, historyDays: $historyDays) {
             itemId
             showTitle
             itemType
@@ -32,7 +36,7 @@ export const load = (async () => {
 				tvdbId?: string | null;
 				lastState: string;
 			}[];
-		}>(CALENDAR_QUERY, { limit: 200 });
+		}>(CALENDAR_QUERY, { limit: 200, historyDays: HISTORY_DAYS });
 
 		const items = data.calendar.map((i) => ({
 			item_id: i.itemId,

@@ -199,13 +199,19 @@ pub struct CalendarQuery;
 
 #[Object]
 impl CalendarQuery {
-    /// Get upcoming unreleased items (calendar feed), with show title resolved in a single query.
+    /// Calendar feed, with show title resolved in a single query: upcoming
+    /// unreleased items (at most `limit`, default 100), plus every movie and
+    /// episode that aired in the last `historyDays` days (default 0, capped at
+    /// a year) whatever its state, so a release that never downloaded is still
+    /// on the calendar.
     async fn calendar(
         &self,
         _ctx: &Context<'_>,
         limit: Option<i64>,
+        history_days: Option<i64>,
     ) -> GqlResult<Vec<CalendarEntry>> {
-        let rows = repo::get_calendar_entries(limit.unwrap_or(100)).await?;
+        let rows =
+            repo::get_calendar_entries(limit.unwrap_or(100), history_days.unwrap_or(0)).await?;
 
         let entries = rows
             .into_iter()
