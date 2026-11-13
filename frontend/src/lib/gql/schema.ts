@@ -1045,7 +1045,13 @@ export type QueryRoot = {
    * Returns a JSON object mapping ISO date strings (YYYY-MM-DD) to counts.
    */
   activity: Scalars['JSON']['output'];
-  /** Get upcoming unreleased items (calendar feed), with show title resolved in a single query. */
+  /**
+   * Calendar feed, with show title resolved in a single query: upcoming
+   * unreleased items (at most `limit`, default 100), plus every movie and
+   * episode that aired in the last `historyDays` days (default 0, capped at
+   * a year) whatever its state, so a release that never downloaded is still
+   * on the calendar.
+   */
   calendar: Array<CalendarEntry>;
   companyDetails: PersonDetails;
   /** Return all ranking profiles (built-in + custom) with their enabled status. */
@@ -1153,6 +1159,7 @@ export type QueryRoot = {
 
 
 export type QueryRootCalendarArgs = {
+  historyDays?: InputMaybe<Scalars['Int']['input']>;
   limit?: InputMaybe<Scalars['Int']['input']>;
 };
 

@@ -91,6 +91,14 @@
 
     const today = dateUtils.getToday();
     const todayKey = dateUtils.toISODate(today);
+
+    // Aired before today but never downloaded (a paused item is waiting on
+    // purpose, so it doesn't count).
+    const isMissed = (item: EntertainmentItem) =>
+        !!item.aired_at &&
+        item.aired_at.slice(0, 10) < todayKey &&
+        item.last_state !== "Completed" &&
+        item.last_state !== "Paused";
     let currentDate = $state<CalendarDate>(today);
     let filters = $state<Record<string, boolean>>({
         movie: true,
@@ -203,16 +211,20 @@
 {#snippet entertainmentItem(item: EntertainmentItem, compact = false)}
     {const href = $derived(itemUrl(item))}
     {const s = $derived(typeStyles[item.item_type] ?? typeStyles.movie)}
+    {const missed = $derived(isMissed(item))}
     {const classes = $derived(cn(
         "group/item flex items-center rounded-md border transition-colors",
         compact ? "gap-1.5 truncate px-2 py-1" : "gap-3 p-2.5",
         s.item,
         item.last_state === "Completed" && "line-through opacity-60",
+        missed && "ring-1 ring-amber-500/80",
         href && "no-underline"
     ))}
     {const title = $derived(compact
-        ? `${item.show_title}${item.season ? ` S${item.season}E${item.episode}` : ""}`
-        : undefined)}
+        ? `${item.show_title}${item.season ? ` S${item.season}E${item.episode}` : ""}${missed ? " — aired, not downloaded" : ""}`
+        : missed
+          ? "Aired, not downloaded"
+          : undefined)}
     {#if href}
         <a {href} class={classes} {title}>
             {#if compact}

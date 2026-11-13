@@ -147,14 +147,24 @@ pub async fn get_year_releases() -> Result<Vec<(i32, i64)>> {
     Ok(rows.into_iter().map(|r| (r.year, r.count)).collect())
 }
 
-/// Fetch upcoming unreleased items with the show title resolved in a single JOIN.
-pub async fn get_calendar_entries(limit: i64) -> Result<Vec<crate::entities::CalendarRow>> {
+/// Most days of history the calendar will return, however many are asked for.
+pub const CALENDAR_MAX_HISTORY_DAYS: i64 = 365;
+
+/// Calendar feed with the show title resolved in a single JOIN: every movie or
+/// episode still unreleased with a future air date (at most `limit`), plus —
+/// when `history_days` > 0 — every movie or episode that aired from
+/// `history_days` ago up to today, whatever its state. The history is what
+/// makes a release that came and went without downloading visible at all: an
+/// item leaves the "unreleased" set the moment it airs.
+pub async fn get_calendar_entries(
+    limit: i64,
+    history_days: i64,
+) -> Result<Vec<crate::entities::CalendarRow>> {
+    let history_days = history_days.clamp(0, CALENDAR_MAX_HISTORY_DAYS);
     // Self-joins to resolve the ancestor show title — keep the raw statement.
     // `item_type`/`state` are PG enums: cast to ::text so FromQueryResult decodes
     // them via DeriveActiveEnum's string_value rather than the native enum OID.
-    let rows = crate::entities::CalendarRow::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        r#"SELECT
+    const COLUMNS: &str = r#"
                mi.id,
                mi.item_type::text AS item_type,
                mi.state::text AS state,
@@ -185,12 +195,28 @@ pub async fn get_calendar_entries(limit: i64) -> Result<Vec<crate::entities::Cal
                ) AS tvdb_id
            FROM media_items mi
            LEFT JOIN media_items parent      ON parent.id = mi.parent_id
-           LEFT JOIN media_items grandparent ON grandparent.id = parent.parent_id
+           LEFT JOIN media_items grandparent ON grandparent.id = parent.parent_id"#;
+    // `limit` bounds the upcoming half only, so a busy month of history can't
+    // push future releases off the calendar. Seasons are left out of the
+    // history: their episodes already stand for them.
+    let sql = format!(
+        r#"(SELECT {COLUMNS}
            WHERE mi.aired_at > CURRENT_DATE
              AND mi.state = 'unreleased'
            ORDER BY mi.aired_at ASC
-           LIMIT $1"#,
-        [limit.into()],
+           LIMIT $1)
+           UNION ALL
+           (SELECT {COLUMNS}
+           WHERE $2 > 0
+             AND mi.aired_at >= CURRENT_DATE - $2::integer
+             AND mi.aired_at <= CURRENT_DATE
+             AND mi.item_type IN ('movie', 'episode'))
+           ORDER BY aired_at ASC"#
+    );
+    let rows = crate::entities::CalendarRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        sql,
+        [limit.into(), history_days.into()],
     ))
     .all(orm())
     .await?;
