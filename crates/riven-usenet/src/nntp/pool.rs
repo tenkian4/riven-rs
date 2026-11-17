@@ -34,6 +34,14 @@ const NOT_FOUND_DEMOTE_THRESHOLD: u32 = 3;
 const FAILURE_DEMOTE_THRESHOLD: u32 = 3;
 /// Consecutive successes that clear a demotion.
 const SUCCESS_PROMOTE_THRESHOLD: u32 = 10;
+/// How long a demotion lasts before the provider is back in normal rotation
+/// with a clean record. Without it a demotion was effectively permanent: a
+/// demoted provider is only asked once its healthier peers have failed, so it
+/// almost never saw the `SUCCESS_PROMOTE_THRESHOLD` run that would clear it —
+/// a short burst of `430`s once left a fast provider idle for most of a day
+/// while playback crawled along on the slow one. A provider that is still
+/// unhealthy is simply demoted again after a few more misses.
+const DEMOTION_TTL: Duration = Duration::from_secs(5 * 60);
 
 /// Default floor on the time one article gets against one provider, used
 /// wherever [`NntpServerConfig::article_timeout`] is not set to something else.
@@ -88,12 +96,30 @@ struct Health {
     consecutive_not_found: AtomicU32,
     consecutive_failure: AtomicU32,
     consecutive_success: AtomicU32,
+    /// When the current demotion began, so it can lapse after `DEMOTION_TTL`.
+    demoted_since: Mutex<Option<Instant>>,
 }
 
 impl Health {
     fn is_demoted(&self) -> bool {
-        self.consecutive_not_found.load(Ordering::Relaxed) >= NOT_FOUND_DEMOTE_THRESHOLD
-            || self.consecutive_failure.load(Ordering::Relaxed) >= FAILURE_DEMOTE_THRESHOLD
+        let over_threshold = self.consecutive_not_found.load(Ordering::Relaxed)
+            >= NOT_FOUND_DEMOTE_THRESHOLD
+            || self.consecutive_failure.load(Ordering::Relaxed) >= FAILURE_DEMOTE_THRESHOLD;
+        if !over_threshold {
+            return false;
+        }
+        let mut since = self.demoted_since.lock();
+        let started = *since.get_or_insert_with(Instant::now);
+        if started.elapsed() < DEMOTION_TTL {
+            return true;
+        }
+        // Served its time. Clearing the counts — not just the timestamp — is
+        // what lets a fresh run of misses demote it again: the demotion only
+        // re-arms when a count climbs back to its threshold.
+        *since = None;
+        self.consecutive_not_found.store(0, Ordering::Relaxed);
+        self.consecutive_failure.store(0, Ordering::Relaxed);
+        false
     }
 
     /// How long one article may take against this provider before the fetch is
@@ -246,6 +272,7 @@ impl ClientPool {
                 .consecutive_not_found
                 .store(0, Ordering::Relaxed);
             self.health.consecutive_failure.store(0, Ordering::Relaxed);
+            *self.health.demoted_since.lock() = None;
             if was_demoted {
                 tracing::info!(host = %self.config.host, "nntp provider promoted after sustained success");
             }
@@ -631,6 +658,50 @@ mod tests {
             pool.record_success(Duration::from_millis(200));
         }
         assert!(!pool.is_demoted());
+    }
+
+    /// A demoted provider is only asked once its peers fail, so it can rarely
+    /// earn the success run that clears a demotion — one burst of `430`s left a
+    /// fast provider unused for most of a day. The demotion has to lapse.
+    #[tokio::test]
+    async fn a_demotion_lapses_without_needing_successes() {
+        tokio::time::pause();
+        let pool = unreachable_pool();
+        for _ in 0..NOT_FOUND_DEMOTE_THRESHOLD {
+            pool.record_not_found();
+        }
+        assert!(pool.is_demoted());
+
+        tokio::time::advance(DEMOTION_TTL.saturating_sub(Duration::from_secs(1))).await;
+        assert!(pool.is_demoted(), "still inside the demotion window");
+
+        tokio::time::advance(Duration::from_secs(2)).await;
+        assert!(
+            !pool.is_demoted(),
+            "back in rotation once the window passes"
+        );
+        assert_eq!(pool.consecutive_not_found(), 0, "with a clean record");
+    }
+
+    /// Lapsing must not leave a still-bad provider exempt: fresh misses after
+    /// the window demote it again, for a fresh window.
+    #[tokio::test]
+    async fn a_lapsed_demotion_re_arms_on_fresh_misses() {
+        tokio::time::pause();
+        let pool = unreachable_pool();
+        for _ in 0..FAILURE_DEMOTE_THRESHOLD {
+            pool.record_failure();
+        }
+        assert!(pool.is_demoted());
+        tokio::time::advance(DEMOTION_TTL + Duration::from_secs(1)).await;
+        assert!(!pool.is_demoted());
+
+        for _ in 0..FAILURE_DEMOTE_THRESHOLD {
+            pool.record_failure();
+        }
+        assert!(pool.is_demoted(), "demoted again by a new run of failures");
+        tokio::time::advance(DEMOTION_TTL.saturating_sub(Duration::from_secs(1))).await;
+        assert!(pool.is_demoted(), "for a window of its own");
     }
 
     #[tokio::test]
