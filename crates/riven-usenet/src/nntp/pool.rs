@@ -54,6 +54,15 @@ const MAX_BUDGET_OVER_FLOOR: u32 = 3;
 /// provider rather than a flat number keeps the bound honest on a slow
 /// provider and tight on a fast one.
 const STALL_LATENCY_MULTIPLE: u32 = 8;
+/// Multiple of a provider's measured article latency after which the same
+/// article is also asked of the next provider — a hedge. Well past a normal
+/// fetch, so only the slow tail is ever duplicated.
+const HEDGE_LATENCY_MULTIPLE: u64 = 4;
+/// Floor on the hedge delay, so a provider measured as very fast isn't hedged
+/// against on ordinary jitter.
+const HEDGE_MIN: Duration = Duration::from_millis(500);
+/// Hedge delay before a provider has a latency estimate of its own.
+const HEDGE_DEFAULT: Duration = Duration::from_secs(1);
 /// Weight of the newest sample in the latency EWMA, as a right shift: the
 /// estimate moves an eighth of the way to each new observation.
 const LATENCY_EWMA_SHIFT: u32 = 3;
@@ -193,6 +202,20 @@ impl ClientPool {
     /// measured latency — see [`Health::article_budget`].
     pub fn article_budget(&self) -> Duration {
         self.health.article_budget(self.config.article_timeout)
+    }
+
+    /// How long a fetch may run against this provider before the same article
+    /// is also asked of the next one. Scaled off this provider's own measured
+    /// latency, floored at [`HEDGE_MIN`] and never past its article budget —
+    /// by then the fetch has failed over anyway.
+    pub fn hedge_delay(&self) -> Duration {
+        let latency_ms = self.health.latency_ms.load(Ordering::Relaxed);
+        let delay = if latency_ms == 0 {
+            HEDGE_DEFAULT
+        } else {
+            Duration::from_millis(latency_ms.saturating_mul(HEDGE_LATENCY_MULTIPLE))
+        };
+        delay.max(HEDGE_MIN).min(self.article_budget())
     }
 
     pub fn record_not_found(&self) {

@@ -158,7 +158,7 @@ impl SegmentPool {
                     let pool = self.clone();
                     let (result_tx, result_rx) = oneshot::channel();
                     tokio::spawn(async move {
-                        let result = pool.fetch_sequential(&key).await;
+                        let result = pool.fetch_from_providers(&key).await;
                         pool.inflight.finish(&key, &slot);
                         drop(result_tx.send(result));
                     });
@@ -170,53 +170,125 @@ impl SegmentPool {
         }
     }
 
-    /// Walk providers in order, stopping at the first one that serves the
-    /// article. A provider that answers `430` is excluded and the next is
-    /// tried; if every provider says `430` the id is permanently missing.
+    /// Walk providers in order until one serves the article, hedging the slow
+    /// tail: if a fetch is still running after its provider's
+    /// [`ClientPool::hedge_delay`], the same article is also asked of the next
+    /// primary and whichever answers first wins. A provider beaten by its hedge
+    /// has a failure recorded, the same as a stall: it took several times its
+    /// own normal latency, and counting it is what still demotes a provider
+    /// that has stopped answering, now that the hedge settles the article
+    /// before its budget runs out. Without hedging, a provider that
+    /// stays slow but never fails kept every article to itself — the walk only
+    /// moved on after an error or a full article budget — and a single stream
+    /// crawled at its pace while the other provider sat idle.
     ///
-    /// A provider that stops answering is treated the same way — its budget
-    /// expires (see [`ClientPool::article_budget`]) and the walk moves on. That
-    /// failover, not a longer wait, is what rescues a stalled article: the
-    /// stall observed in practice was a socket the provider had silently
-    /// stopped serving, which no amount of patience on that socket recovers.
-    async fn fetch_sequential(&self, message_id: &Arc<str>) -> Result<Bytes, NntpError> {
+    /// At most two fetches of one article run at once, and backups are never a
+    /// hedge: they are only tried once every primary has failed, as before. A
+    /// provider that answers `430` is excluded and the next is tried; if every
+    /// provider says `430` the id is permanently missing. The losing fetch is
+    /// dropped mid-read, which leaves its connection poisoned, so the pool
+    /// discards that socket rather than reusing it.
+    async fn fetch_from_providers(&self, message_id: &Arc<str>) -> Result<Bytes, NntpError> {
+        const MAX_PARALLEL: usize = 2;
+
+        let order = self.attempt_order();
+        let mut next = 0;
+        let mut running = futures::stream::FuturesUnordered::new();
+        let mut hedge_at: Option<Instant> = None;
+        // The provider a hedge was raced against, charged if the hedge wins.
+        let mut hedged_against: Option<&Arc<ClientPool>> = None;
         let mut all_not_found = true;
         let mut attempted = false;
         let mut last_err: Option<NntpError> = None;
 
-        for provider in self.attempt_order() {
-            attempted = true;
-            let started = Instant::now();
-            match self.fetch_from(provider, message_id).await {
-                Ok(bytes) => {
-                    provider.record_success(started.elapsed());
-                    return Ok(bytes);
+        let attempt = |provider: &Arc<ClientPool>| {
+            let provider = Arc::clone(provider);
+            async move {
+                let started = Instant::now();
+                let result = self.fetch_from(&provider, message_id).await;
+                (provider, started.elapsed(), result)
+            }
+        };
+
+        loop {
+            if running.is_empty() {
+                let Some(provider) = order.get(next) else {
+                    break;
+                };
+                next += 1;
+                attempted = true;
+                hedge_at = Some(Instant::now() + provider.hedge_delay());
+                running.push(attempt(provider));
+            }
+
+            // A hedge goes only to a primary, and only while the one fetch it
+            // would race is still in flight.
+            let can_hedge = running.len() < MAX_PARALLEL
+                && order.get(next).is_some_and(|p| !p.is_backup())
+                && !order[next - 1].is_backup();
+            let hedge_timer = async {
+                match hedge_at.filter(|_| can_hedge) {
+                    Some(at) => tokio::time::sleep_until(at).await,
+                    None => std::future::pending().await,
                 }
-                Err(NntpError::ArticleNotFound(status)) => {
-                    provider.record_not_found();
-                    last_err = Some(NntpError::ArticleNotFound(status));
-                }
-                Err(error) => {
-                    let stalled = matches!(error, NntpError::Timeout);
-                    provider.record_failure();
-                    if stalled {
-                        tracing::warn!(
-                            host = provider.host(),
-                            message_id = %message_id,
-                            waited_ms = started.elapsed().as_millis(),
-                            budget_ms = provider.article_budget().as_millis(),
-                            "nntp provider stopped answering; failing over to the next"
-                        );
-                    } else {
-                        tracing::debug!(
-                            host = provider.host(),
-                            message_id = %message_id,
-                            %error,
-                            "nntp provider failed; excluding and trying the next"
-                        );
+            };
+
+            tokio::select! {
+                Some((provider, elapsed, result)) = running.next() => match result {
+                    Ok(bytes) => {
+                        provider.record_success(elapsed);
+                        if !running.is_empty() {
+                            self.metrics.record_hedge_won();
+                            if let Some(slow) = hedged_against.filter(|p| !Arc::ptr_eq(p, &provider)) {
+                                slow.record_failure();
+                            }
+                            tracing::debug!(
+                                host = provider.host(),
+                                message_id = %message_id,
+                                "won a hedged fetch; dropping the slower one"
+                            );
+                        }
+                        return Ok(bytes);
                     }
-                    all_not_found = false;
-                    last_err = Some(error);
+                    Err(NntpError::ArticleNotFound(status)) => {
+                        provider.record_not_found();
+                        last_err = Some(NntpError::ArticleNotFound(status));
+                    }
+                    Err(error) => {
+                        let stalled = matches!(error, NntpError::Timeout);
+                        provider.record_failure();
+                        if stalled {
+                            tracing::warn!(
+                                host = provider.host(),
+                                message_id = %message_id,
+                                waited_ms = elapsed.as_millis(),
+                                budget_ms = provider.article_budget().as_millis(),
+                                "nntp provider stopped answering; failing over to the next"
+                            );
+                        } else {
+                            tracing::debug!(
+                                host = provider.host(),
+                                message_id = %message_id,
+                                %error,
+                                "nntp provider failed; excluding and trying the next"
+                            );
+                        }
+                        all_not_found = false;
+                        last_err = Some(error);
+                    }
+                },
+                () = hedge_timer => {
+                    hedged_against = Some(order[next - 1]);
+                    let provider = &order[next];
+                    next += 1;
+                    hedge_at = None;
+                    self.metrics.record_hedge();
+                    tracing::debug!(
+                        host = provider.host(),
+                        message_id = %message_id,
+                        "fetch is slow; hedging the same article to the next provider"
+                    );
+                    running.push(attempt(provider));
                 }
             }
         }
@@ -472,6 +544,8 @@ pub struct FetchMetrics {
     ok: AtomicU64,
     failed: AtomicU64,
     bytes_decoded: AtomicU64,
+    hedges: AtomicU64,
+    hedges_won: AtomicU64,
 }
 
 impl FetchMetrics {
@@ -483,6 +557,24 @@ impl FetchMetrics {
 
     fn record_failed(&self) {
         self.failed.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_hedge(&self) {
+        self.hedges.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_hedge_won(&self) {
+        self.hedges_won.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Fetches that ran long enough to be raced against a second provider.
+    pub fn hedges(&self) -> u64 {
+        self.hedges.load(Ordering::Relaxed)
+    }
+
+    /// Of those, the ones settled while the other fetch was still running.
+    pub fn hedges_won(&self) -> u64 {
+        self.hedges_won.load(Ordering::Relaxed)
     }
 
     pub fn ok(&self) -> u64 {
@@ -644,6 +736,58 @@ mod tests {
             !pool.missing().contains("a@test"),
             "a stall is not evidence the article is gone"
         );
+    }
+
+    /// A provider that keeps a fetch open without serving it used to hold the
+    /// article for its whole budget — and, slow but never failing, every
+    /// article after it. The next provider is now asked in parallel once the
+    /// fetch outlives its hedge delay; the stalled one is dropped and charged a
+    /// failure, so a provider that has stopped answering is still demoted.
+    #[tokio::test]
+    async fn a_slow_provider_is_hedged_instead_of_waited_out() {
+        let (silent_addr, _silent) = spawn_silent_body_server().await;
+        let (ok_addr, _ok) = spawn_fake_nntp_server().await;
+        let mut slow = provider(silent_addr, 2, 0);
+        let mut fast = provider(ok_addr, 2, 1);
+        // Long budgets, so only a hedge — not a timeout failover — can be what
+        // brings the answer back quickly.
+        slow.config.article_timeout = Duration::from_secs(5);
+        fast.config.article_timeout = Duration::from_secs(5);
+        let pool = SegmentPool::new(vec![slow, fast]);
+
+        let started = std::time::Instant::now();
+        let bytes = pool.fetch_segment("a@test").await.unwrap();
+        assert_eq!(bytes.as_ref(), FAKE_SEGMENT_PAYLOAD);
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "took {:?}: the slow provider was waited out, not hedged",
+            started.elapsed()
+        );
+        assert_eq!(pool.metrics().hedges(), 1);
+        assert_eq!(pool.metrics().hedges_won(), 1);
+        assert_eq!(
+            pool.providers()[0].consecutive_failure(),
+            1,
+            "losing the race counts against the slow provider"
+        );
+        assert_eq!(pool.providers()[1].consecutive_failure(), 0);
+    }
+
+    /// Backups stay what they promise: tried only once every primary has
+    /// failed, never raced against a slow primary.
+    #[tokio::test]
+    async fn a_backup_is_never_a_hedge() {
+        let (silent_addr, _silent) = spawn_silent_body_server().await;
+        let (ok_addr, _ok) = spawn_fake_nntp_server().await;
+        let mut backup = provider(ok_addr, 2, 0);
+        backup.is_backup = true;
+        // Primary times out at 200 ms, then the walk falls over to the backup.
+        let pool = SegmentPool::new(vec![provider(silent_addr, 2, 0), backup]);
+
+        let bytes = pool.fetch_segment("a@test").await.unwrap();
+        assert_eq!(bytes.as_ref(), FAKE_SEGMENT_PAYLOAD);
+        assert_eq!(pool.metrics().hedges(), 0);
+        assert_eq!(pool.providers()[0].consecutive_failure(), 1);
     }
 
     /// The point of [`SegmentPool::fetch_batch`]: a batch consumer holds one
