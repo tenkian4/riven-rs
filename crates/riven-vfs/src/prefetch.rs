@@ -48,15 +48,15 @@ const HTTP_CHUNK: u64 = MIB;
 const HTTP_READ_AHEAD_UNITS: usize = 8;
 /// Cushion held ahead of the cursor on an article origin, in **articles**.
 ///
-/// Set to match streamnzb's `DefaultReadAhead` (8) in
-/// `pkg/media/loader/segment_reader.go`, so the two stream with the same depth.
+/// Twice [`ARTICLE_MAX_IN_FLIGHT_UNITS`], keeping the cushion deeper than the
+/// wire is wide (see [`Config::max_in_flight`]). It was 8, matching streamnzb's
+/// `DefaultReadAhead`, while the wire held 4.
 ///
 /// Note the tradeoff this accepts: a unit is one article and posters choose the
 /// segment size, so a fixed count buys a cushion whose *duration* varies with
-/// the post — 8 articles is ~5.6 MB on a 720 KiB post but ~30 MB on a 3.84 MB
+/// the post — 16 articles is ~11 MB on a 720 KiB post but ~61 MB on a 3.84 MB
 /// one. The previous policy sized the cushion in bytes (96 MiB) for that reason.
-/// Matching streamnzb's count was chosen deliberately over matching its bytes.
-const ARTICLE_READ_AHEAD_UNITS: usize = 8;
+const ARTICLE_READ_AHEAD_UNITS: usize = 16;
 /// Range requests allowed on the wire at once for one HTTP handle.
 ///
 /// Was 8 — the whole window, so depth equalled width. That is the arrangement

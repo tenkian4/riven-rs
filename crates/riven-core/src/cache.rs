@@ -52,10 +52,11 @@ pub struct Pool {
 /// there was none. A byte ceiling cannot express "one stream keeps its cushion
 /// and nothing else"; only the stream knows when it is done with a unit.
 ///
-/// 64 MiB leaves room for six concurrent streams at [`READ_AHEAD_PER_STREAM`]
-/// before they begin taking each other's cushion — past anything this serves at
-/// once, and still a fifth of what it used to reserve.
-pub const READ_AHEAD: Pool = Pool::new("read-ahead", "RIVEN_READ_AHEAD_CACHE_BYTES", 64 * MIB);
+/// 128 MiB, doubled with the article window (16 articles, twice the in-flight
+/// cap): a typical ~720 KiB-segment stream now holds ~13 MiB, so this is still
+/// room for several before they take each other's cushion, and a single
+/// 3.84 MB-segment post's ~70 MiB window no longer exceeds the whole cache.
+pub const READ_AHEAD: Pool = Pool::new("read-ahead", "RIVEN_READ_AHEAD_CACHE_BYTES", 128 * MIB);
 
 /// What one open file holds in [`READ_AHEAD`] once trimmed to its window:
 /// cushion plus retain-behind. The figure is the memory cost of a concurrent
@@ -63,7 +64,7 @@ pub const READ_AHEAD: Pool = Pool::new("read-ahead", "RIVEN_READ_AHEAD_CACHE_BYT
 ///
 /// Set by the HTTP origin, whose unit riven chooses (8 + 2 units of 1 MiB, the
 /// chunk size riven-ts streams the same debrid origins at). An article origin
-/// is comparable at a typical 720 KiB segment — ~7 MiB — but the poster picks
+/// runs to ~13 MiB at a typical 720 KiB segment (16 + 2 articles), but the poster picks
 /// that size, so a 3.84 MB-segment post runs to ~38 MiB and is covered by
 /// [`READ_AHEAD`]'s ceiling rather than by this figure.
 ///
@@ -120,10 +121,14 @@ pub const SEGMENT_SIZES: Pool = Pool::new(
 /// one in-flight generation evicts articles before their reader arrives.
 /// `riven-vfs` reads this as its own in-flight cap.
 ///
-/// Set to match streamnzb, which keeps 8 segments of read-ahead
-/// (`DefaultReadAhead` in `pkg/media/loader/segment_reader.go`) and therefore
-/// half that on the wire under riven's depth-versus-width split.
-pub const ARTICLE_MAX_IN_FLIGHT: usize = 4;
+/// 8, up from the 4 that matched streamnzb's read-ahead of 8 at half on the
+/// wire. A single stream's throughput is roughly this many articles divided by
+/// one article's latency, so at 4 it was capped well below the line and
+/// collapsed with a slow provider — ~0.4 MB/s at the several-second fetches of
+/// a struggling one — while three streams together measured 23 MB/s against
+/// the same account. 8 per stream stays far below the ~60-connection point at
+/// which a provider's aggregate collapses.
+pub const ARTICLE_MAX_IN_FLIGHT: usize = 8;
 /// Largest article size to budget for. Posters choose the segment size; 3.84 MB
 /// is the largest seen in practice, and sizing for it costs memory on a
 /// small-segment post but never under-sizes on a large-segment one.
