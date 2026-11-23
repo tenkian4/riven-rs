@@ -20,6 +20,22 @@ fn index_event(job: &IndexJob) -> RivenEvent {
 
 pub async fn start(job: &IndexJob, queue: &JobQueue) {
     let id = job.id;
+    // A season or episode is indexed through its show; no metadata provider
+    // describes one on its own, so this job could only fail and reschedule
+    // itself a day out — forever, for one queued before reindexes stopped
+    // being scheduled for them. Drop it, and any schedule it left behind.
+    if matches!(
+        job.item_type,
+        MediaItemType::Season | MediaItemType::Episode
+    ) {
+        tracing::debug!(
+            id,
+            item_type = ?job.item_type,
+            "index: seasons and episodes are indexed through their show; dropping this job"
+        );
+        queue.clear_scheduled_index(id).await;
+        return;
+    }
     let Some(item) = load_media_item_or_log(id, "indexing").await else {
         return;
     };

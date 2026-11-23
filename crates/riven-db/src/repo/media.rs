@@ -418,11 +418,16 @@ pub async fn update_scraped(id: i64) -> Result<()> {
 /// with existing streams lands on `Scraped`, not just `Indexed`). The cascade
 /// inside `recompute` then propagates the change up to the season and show.
 pub async fn transition_unreleased_aired() -> Result<Vec<i64>> {
-    let today = Utc::now().date_naive();
     let ids: Vec<i64> = media_items::Entity::find()
         .filter(media_items::Column::State.eq(MediaItemState::Unreleased))
         .filter(media_items::Column::AiredAt.is_not_null())
-        .filter(media_items::Column::AiredAt.lte(today))
+        // Aired means broadcast, not "the air date has started": an evening
+        // episode compared by date alone was released at midnight UTC, ~21 h
+        // early, and spent its first scrapes — and their retry backoff —
+        // before anything could have been uploaded.
+        .filter(Expr::cust(
+            "COALESCE(aired_at_utc, aired_at::timestamptz) <= NOW()",
+        ))
         .filter(media_items::Column::IsRequested.eq(true))
         .select_only()
         .column(media_items::Column::Id)
