@@ -213,13 +213,18 @@ impl MainOrchestrator {
                     }
                 }
             }
-            _ => {
+            MediaItemType::Movie => {
                 if item.state == MediaItemState::Unreleased {
                     ReindexNeed::Needed
                 } else {
                     ReindexNeed::NotNeeded
                 }
             }
+            // Episodes and seasons get their metadata from their show's index,
+            // which is scheduled for a continuing show above. No provider
+            // answers a lone episode, so a reindex of one could only fail —
+            // daily, each time charging the episode a failed attempt.
+            MediaItemType::Season | MediaItemType::Episode => ReindexNeed::NotNeeded,
         }
     }
 

@@ -240,7 +240,8 @@ pub async fn get_ongoing_container_ids() -> Result<Vec<i64>> {
 /// half of the check: any non-`Ended` show (`show_status` is `Continuing`,
 /// or `NULL` on a not-yet-fully-indexed row — only an explicitly `Ended` show
 /// can be safely excluded, since it can never have a future air date either
-/// way), plus any non-show item still `Unreleased`. Whether a candidate
+/// way), plus any movie still `Unreleased`. Seasons and episodes are never
+/// reindexed on their own — their metadata comes through their show. Whether a candidate
 /// *actually* needs one — in particular a non-`Continuing` show's "has a
 /// known next air date" case — depends on a query keyed by show id
 /// (`get_next_unreleased_air_date_for_show`), so callers must still apply
@@ -261,7 +262,7 @@ pub async fn get_reindex_schedule_candidates() -> Result<Vec<i64>> {
                 )
                 .add(
                     Condition::all()
-                        .add(media_items::Column::ItemType.ne(MediaItemType::Show))
+                        .add(media_items::Column::ItemType.eq(MediaItemType::Movie))
                         .add(media_items::Column::State.eq(MediaItemState::Unreleased)),
                 ),
         )
@@ -470,11 +471,16 @@ pub async fn update_scraped(id: i64) -> Result<()> {
 /// with existing streams lands on `Scraped`, not just `Indexed`). The cascade
 /// inside `recompute` then propagates the change up to the season and show.
 pub async fn transition_unreleased_aired() -> Result<Vec<i64>> {
-    let today = Utc::now().date_naive();
     let ids: Vec<i64> = media_items::Entity::find()
         .filter(media_items::Column::State.eq(MediaItemState::Unreleased))
         .filter(media_items::Column::AiredAt.is_not_null())
-        .filter(media_items::Column::AiredAt.lte(today))
+        // Aired means broadcast, not "the air date has started": an evening
+        // episode compared by date alone was released at midnight UTC, ~21 h
+        // early, and spent its first scrapes — and their retry backoff —
+        // before anything could have been uploaded.
+        .filter(Expr::cust(
+            "COALESCE(aired_at_utc, aired_at::timestamptz) <= NOW()",
+        ))
         .filter(media_items::Column::IsRequested.eq(true))
         .select_only()
         .column(media_items::Column::Id)

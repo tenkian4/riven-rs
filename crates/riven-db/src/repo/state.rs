@@ -134,7 +134,10 @@ async fn load_item_facts(item_id: i64) -> Result<Option<ItemFacts>> {
               m.show_status::text AS show_status,
               m.parent_id,
               m.failed_attempts,
-              (m.aired_at IS NOT NULL AND m.aired_at > CURRENT_DATE) AS is_unreleased,
+              -- The broadcast time when there is one, else midnight UTC on the
+              -- air date: the same rule `upsert_media_item` applies when
+              -- metadata lands, so the two never disagree about an item.
+              COALESCE(m.aired_at_utc, m.aired_at::timestamptz) > NOW() AS is_unreleased,
               (m.aired_at IS NOT NULL) AS has_air_date,
               (m.indexed_at IS NOT NULL) AS has_been_indexed,
               EXISTS(
