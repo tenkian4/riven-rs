@@ -176,11 +176,10 @@ async fn handle_validate(job: &ProcessMediaItemJob, item: &MediaItem, queue: &Jo
                 retry_at = %at,
                 "pipeline: item still isn't complete after the download step; scheduling another scrape once its cooldown expires"
             );
+            // One pending retry per item: a fresh delayed job per failure stacked
+            // up hundreds of copies for an item that never succeeds.
             queue
-                .push_process_media_item_after(
-                    job.clone().at_step(ProcessStep::Scrape),
-                    cooldown.to_std().unwrap_or_default(),
-                )
+                .schedule_process_media_item_retry(job.clone().at_step(ProcessStep::Scrape), at)
                 .await;
         }
     }

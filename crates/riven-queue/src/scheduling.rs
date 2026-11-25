@@ -13,6 +13,38 @@ impl JobQueue {
             .await;
     }
 
+    /// Schedule a retry of the pipeline for `job.id` at `run_at`, keeping at
+    /// most one such retry pending per item. The delayed re-scrape queued when
+    /// an item is still incomplete after its download step used a fresh task id
+    /// on every call, so each failure added another copy that stayed until it
+    /// ran and then added its own: one stuck Bob's Burgers episode had 398
+    /// queued, each failing in turn — about sixteen failed searches and as many
+    /// notifications an hour, for ever. Now an earlier pending retry is kept
+    /// and a later one replaces nothing.
+    pub async fn schedule_process_media_item_retry(
+        &self,
+        job: ProcessMediaItemJob,
+        run_at: DateTime<Utc>,
+    ) {
+        let id = job.id;
+        let task_id = self
+            .pick_scheduled_task_id(
+                self.process_media_item_storage.get_config(),
+                scheduled_retry_task_id(id),
+                scheduled_retry_alt_task_id(id),
+            )
+            .await;
+        self.schedule_apalis_task(
+            "process-media-item-retry",
+            id,
+            &self.process_media_item_storage,
+            task_id,
+            job,
+            run_at,
+        )
+        .await;
+    }
+
     pub async fn clear_scheduled_index(&self, id: i64) {
         for task_id in [scheduled_index_task_id(id), scheduled_index_alt_task_id(id)] {
             self.clear_apalis_scheduled_task(
@@ -31,9 +63,18 @@ impl JobQueue {
     /// scheduled means a worker is running it right now, and overwriting it
     /// would orphan the new schedule when that run is acknowledged.
     async fn pick_scheduled_index_task_id(&self, id: i64) -> Ulid {
-        let primary = scheduled_index_task_id(id);
-        let alt = scheduled_index_alt_task_id(id);
-        let config = self.index_storage.get_config();
+        self.pick_scheduled_task_id(
+            self.index_storage.get_config(),
+            scheduled_index_task_id(id),
+            scheduled_index_alt_task_id(id),
+        )
+        .await
+    }
+
+    /// The pair-of-ids choice behind [`Self::pick_scheduled_index_task_id`],
+    /// for any queue: an id that is already scheduled, else `primary` unless
+    /// it is live, in which case `alt`.
+    async fn pick_scheduled_task_id(&self, config: &Config, primary: Ulid, alt: Ulid) -> Ulid {
         let mut conn = self.redis.clone();
         for candidate in [primary, alt] {
             let scheduled: Option<i64> = redis::cmd("ZSCORE")

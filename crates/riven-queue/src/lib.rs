@@ -120,10 +120,56 @@ const SCHEDULED_INDEX_TASK_NAMESPACE: u128 = 0x524956454e494e44_0000000000000000
 /// ids so a live task is never overwritten.
 const SCHEDULED_INDEX_ALT_TASK_NAMESPACE: u128 = 0x524956454e494e45_0000000000000000;
 
+/// Namespaces for an item's single scheduled *retry* of the process-media-item
+/// pipeline (the delayed re-scrape queued when an item is still incomplete after
+/// its download step). One fixed id per item, rather than a fresh random one per
+/// call, is what keeps the retries to one: the pipeline schedules a retry every
+/// time it fails, and a random id per call let each failure add a copy that
+/// never went away — hundreds for one item. Two ids alternate for the same
+/// reason as the index pair above.
+const SCHEDULED_RETRY_TASK_NAMESPACE: u128 = 0x524956454e524554_0000000000000000;
+const SCHEDULED_RETRY_ALT_TASK_NAMESPACE: u128 = 0x524956454e524555_0000000000000000;
+
+fn scheduled_retry_task_id(id: i64) -> Ulid {
+    Ulid::from(SCHEDULED_RETRY_TASK_NAMESPACE | u128::from(id.cast_unsigned()))
+}
+
+fn scheduled_retry_alt_task_id(id: i64) -> Ulid {
+    Ulid::from(SCHEDULED_RETRY_ALT_TASK_NAMESPACE | u128::from(id.cast_unsigned()))
+}
+
 fn scheduled_index_task_id(id: i64) -> Ulid {
     Ulid::from(SCHEDULED_INDEX_TASK_NAMESPACE | u128::from(id.cast_unsigned()))
 }
 
 fn scheduled_index_alt_task_id(id: i64) -> Ulid {
     Ulid::from(SCHEDULED_INDEX_ALT_TASK_NAMESPACE | u128::from(id.cast_unsigned()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_items_retry_ids_are_fixed_and_belong_to_it_alone() {
+        assert_eq!(scheduled_retry_task_id(3788), scheduled_retry_task_id(3788));
+        assert_ne!(scheduled_retry_task_id(3788), scheduled_retry_task_id(3789));
+        assert_ne!(
+            scheduled_retry_task_id(3788),
+            scheduled_retry_alt_task_id(3788),
+            "the pair alternates so a live task is never overwritten"
+        );
+    }
+
+    /// A retry must never land on the id of the same item's scheduled reindex —
+    /// they live in different queues, but sharing an id would make the two
+    /// kinds of job indistinguishable in logs and tooling.
+    #[test]
+    fn retry_ids_do_not_collide_with_index_ids() {
+        for id in [1, 3788, i64::MAX] {
+            let retry = [scheduled_retry_task_id(id), scheduled_retry_alt_task_id(id)];
+            let index = [scheduled_index_task_id(id), scheduled_index_alt_task_id(id)];
+            assert!(retry.iter().all(|r| !index.contains(r)));
+        }
+    }
 }
