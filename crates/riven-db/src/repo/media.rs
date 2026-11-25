@@ -261,7 +261,7 @@ pub async fn get_ongoing_container_ids() -> Result<Vec<i64>> {
 /// reindexed on their own — their metadata comes through their show. Whether a candidate
 /// *actually* needs one — in particular a non-`Continuing` show's "has a
 /// known next air date" case — depends on a query keyed by show id
-/// (`get_next_unreleased_air_date_for_show`), so callers must still apply
+/// (`get_next_unreleased_release_for_show`), so callers must still apply
 /// `MainOrchestrator`'s real `needs_reindex` predicate per candidate; this
 /// only narrows the table scan down to the plausible set first.
 pub async fn get_reindex_schedule_candidates() -> Result<Vec<i64>> {
@@ -290,16 +290,21 @@ pub async fn get_reindex_schedule_candidates() -> Result<Vec<i64>> {
         .await?)
 }
 
-/// Return the earliest requested unreleased descendant air date for a show.
-pub async fn get_next_unreleased_air_date_for_show(
-    show_id: i64,
-) -> Result<Option<chrono::NaiveDate>> {
+/// Return the earliest requested unreleased descendant release time for a
+/// show: the broadcast time when the metadata has one, else midnight UTC on the
+/// air date — the same rule that decides when an item counts as released. A
+/// bare date would put an evening episode's release ~21 h early, which is
+/// already in the past while the episode is still unreleased.
+pub async fn get_next_unreleased_release_for_show(show_id: i64) -> Result<Option<DateTime<Utc>>> {
     // Scalar MIN aggregate; only the `parent_id IN (SELECT season ...)` self-
     // referencing subquery (matching episodes under any of the show's seasons)
     // stays raw inside the filter.
-    let min: Option<Option<chrono::NaiveDate>> = media_items::Entity::find()
+    let min: Option<Option<DateTime<Utc>>> = media_items::Entity::find()
         .select_only()
-        .column_as(media_items::Column::AiredAt.min(), "min")
+        .expr_as(
+            Expr::cust("MIN(COALESCE(aired_at_utc, aired_at::timestamptz))"),
+            "min",
+        )
         .filter(media_items::Column::AiredAt.is_not_null())
         .filter(media_items::Column::State.eq(MediaItemState::Unreleased))
         .filter(media_items::Column::IsRequested.eq(true))

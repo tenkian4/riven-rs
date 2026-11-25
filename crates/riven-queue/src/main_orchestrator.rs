@@ -200,7 +200,7 @@ impl MainOrchestrator {
                 if item.show_status == Some(ShowStatus::Continuing) {
                     return ReindexNeed::Needed;
                 }
-                match repo::get_next_unreleased_air_date_for_show(item.id).await {
+                match repo::get_next_unreleased_release_for_show(item.id).await {
                     Ok(Some(_)) => ReindexNeed::Needed,
                     Ok(None) => ReindexNeed::NotNeeded,
                     Err(error) => {
@@ -295,23 +295,29 @@ impl MainOrchestrator {
         let offset_minutes = config.schedule_offset_minutes.min(i64::MAX as u64) as i64;
         let fallback_days = config.unknown_air_date_offset_days.min(i64::MAX as u64) as i64;
 
-        let target_date = match item.item_type {
+        // The item's own release time: its broadcast time when it has one, else
+        // midnight UTC on its air date.
+        let own_release = || {
+            item.aired_at_utc
+                .or_else(|| item.aired_at.map(midnight_utc))
+        };
+        let target = match item.item_type {
             MediaItemType::Show => {
-                match repo::get_next_unreleased_air_date_for_show(item.id).await {
-                    Ok(Some(date)) => Some(date),
+                match repo::get_next_unreleased_release_for_show(item.id).await {
+                    Ok(Some(at)) => Some(at),
                     Ok(None) | Err(_) => {
                         if item.state == MediaItemState::Unreleased {
-                            item.aired_at
+                            own_release()
                         } else {
                             None
                         }
                     }
                 }
             }
-            _ => item.aired_at,
+            _ => own_release(),
         };
 
-        schedule_datetime(target_date, offset_minutes, fallback_days)
+        schedule_datetime(target, offset_minutes, fallback_days, Utc::now())
     }
 
     /// Recreates any scheduled-reindex entry the `index` queue's Redis-backed
@@ -519,19 +525,80 @@ impl MainOrchestrator {
     }
 }
 
+/// Midnight UTC at the start of `date`.
+fn midnight_utc(date: NaiveDate) -> DateTime<Utc> {
+    let midnight = date
+        .and_hms_opt(0, 0, 0)
+        .expect("midnight should always be valid");
+    DateTime::<Utc>::from_naive_utc_and_offset(midnight, Utc)
+}
+
+/// A scheduled reindex never lands sooner than this from now. Each reindex of
+/// a continuing show schedules the next one, so a target that is already past
+/// would run at once and schedule itself again at once: South Park, whose next
+/// episode airs at 03:00 UTC on the *day after* its calendar date, was
+/// reindexed every ten seconds all afternoon. The floor makes a hot loop
+/// impossible whatever the data says.
+const MIN_REINDEX_DELAY_MINUTES: i64 = 15;
+
 fn schedule_datetime(
-    target_date: Option<NaiveDate>,
+    target: Option<DateTime<Utc>>,
     offset_minutes: i64,
     fallback_days: i64,
+    now: DateTime<Utc>,
 ) -> DateTime<Utc> {
-    match target_date {
-        Some(date) => {
-            let midnight = date
-                .and_hms_opt(0, 0, 0)
-                .expect("midnight should always be valid");
-            DateTime::<Utc>::from_naive_utc_and_offset(midnight, Utc)
-                + Duration::minutes(offset_minutes)
-        }
-        None => Utc::now() + Duration::days(fallback_days),
+    let at = match target {
+        Some(target) => target + Duration::minutes(offset_minutes),
+        None => now + Duration::days(fallback_days),
+    };
+    at.max(now + Duration::minutes(MIN_REINDEX_DELAY_MINUTES))
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::{Duration, NaiveDate, TimeZone, Utc};
+
+    use super::{MIN_REINDEX_DELAY_MINUTES, midnight_utc, schedule_datetime};
+
+    fn at(day: u32, hour: u32) -> chrono::DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 11, day, hour, 0, 0).unwrap()
+    }
+
+    /// South Park: calendar date 25 Nov, broadcast 03:00 UTC on 26 Nov. Scheduled
+    /// from the date it came out at 01:00 on the 25th — already past — and ran
+    /// again immediately, forever.
+    #[test]
+    fn a_reindex_follows_the_broadcast_time_not_the_date() {
+        let now = at(25, 17);
+        assert_eq!(schedule_datetime(Some(at(26, 3)), 60, 7, now), at(26, 4));
+    }
+
+    #[test]
+    fn a_target_already_past_is_pushed_out_instead_of_run_at_once() {
+        let now = at(25, 17);
+        let from_the_bare_date = midnight_utc(NaiveDate::from_ymd_opt(2026, 11, 25).unwrap());
+        assert_eq!(
+            schedule_datetime(Some(from_the_bare_date), 60, 7, now),
+            now + Duration::minutes(MIN_REINDEX_DELAY_MINUTES)
+        );
+    }
+
+    #[test]
+    fn no_known_release_falls_back_to_the_configured_days() {
+        let now = at(25, 17);
+        assert_eq!(schedule_datetime(None, 60, 7, now), now + Duration::days(7));
+        // Even a zero fallback cannot make a same-instant schedule.
+        assert_eq!(
+            schedule_datetime(None, 60, 0, now),
+            now + Duration::minutes(MIN_REINDEX_DELAY_MINUTES)
+        );
+    }
+
+    #[test]
+    fn midnight_utc_is_the_start_of_the_date() {
+        assert_eq!(
+            midnight_utc(NaiveDate::from_ymd_opt(2026, 11, 25).unwrap()),
+            at(25, 0)
+        );
     }
 }
