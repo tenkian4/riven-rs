@@ -42,13 +42,13 @@ anything outside the markers survives regeneration. -->
 
 | Variable | Kind | Read at |
 | --- | --- | --- |
-| `RIVEN_MEMORY_LIMIT_MB` | variable | `crates/riven-core/src/cache.rs:148` |
-| `RIVEN_READ_AHEAD_CACHE_BYTES` | variable | `crates/riven-core/src/cache.rs:58` |
+| `RIVEN_MEMORY_LIMIT_MB` | variable | `crates/riven-core/src/cache.rs:153` |
+| `RIVEN_READ_AHEAD_CACHE_BYTES` | variable | `crates/riven-core/src/cache.rs:59` |
 | `RIVEN_SETTING__` | prefix | `crates/riven-core/src/settings/app.rs:160` |
-| `RIVEN_USENET_CACHE_BYTES` | variable | `crates/riven-core/src/cache.rs:95` |
-| `RIVEN_USENET_META_CACHE_BYTES` | variable | `crates/riven-core/src/cache.rs:81` |
-| `RIVEN_USENET_NZB_CACHE_BYTES` | variable | `crates/riven-core/src/cache.rs:83` |
-| `RIVEN_USENET_SEGMENT_SIZE_CACHE_BYTES` | variable | `crates/riven-core/src/cache.rs:114` |
+| `RIVEN_USENET_CACHE_BYTES` | variable | `crates/riven-core/src/cache.rs:96` |
+| `RIVEN_USENET_META_CACHE_BYTES` | variable | `crates/riven-core/src/cache.rs:82` |
+| `RIVEN_USENET_NZB_CACHE_BYTES` | variable | `crates/riven-core/src/cache.rs:84` |
+| `RIVEN_USENET_SEGMENT_SIZE_CACHE_BYTES` | variable | `crates/riven-core/src/cache.rs:115` |
 
 ### `riven-db`
 

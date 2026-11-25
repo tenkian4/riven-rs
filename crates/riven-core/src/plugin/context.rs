@@ -32,9 +32,10 @@ pub async fn validate_api_key(
             |client| client.get(url).header(header, api_key),
         )
         .await?;
-    let status = resp.status();
-    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return Ok(false);
-    }
-    Ok(true)
+    // Only a rejected key invalidates the setting; any other status (a 5xx, a
+    // redirect) says nothing about the key itself.
+    Ok(!matches!(
+        resp.status(),
+        reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN
+    ))
 }
