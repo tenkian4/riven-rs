@@ -1106,6 +1106,11 @@ type ProductionCompany {
 	originCountry: String
 }
 
+type ProviderBreakdown {
+	provider: String!
+	count: Int!
+}
+
 type QueryRoot {
 	viewer: Viewer!
 	mediaItemFullByTmdb(tmdbId: String!): MediaItemFull
@@ -1225,6 +1230,11 @@ type QueryRoot {
 	Count of movies and shows per release year.
 	"""
 	yearReleases: [YearRelease!]!
+	"""
+	Count of completed downloads grouped by where they came from: `usenet`,
+	or the debrid store that served them (`realdebrid`, `alldebrid`, …).
+	"""
+	providerBreakdown: [ProviderBreakdown!]!
 	"""
 	Get debrid account information for all configured stores.
 	"""

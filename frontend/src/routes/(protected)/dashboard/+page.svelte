@@ -5,6 +5,7 @@
     import type { PageData } from "./$types";
     import ActivityCard from "#lib/components/dashboard/activity-card.svelte";
     import LibraryChartsCard from "#lib/components/dashboard/library-charts-card.svelte";
+    import ProviderSplitCard from "#lib/components/dashboard/provider-split-card.svelte";
     import ReleaseYearCard from "#lib/components/dashboard/release-year-card.svelte";
     import ServiceStatusCard from "#lib/components/dashboard/service-status-card.svelte";
     import DownloaderServicesGrid from "#lib/components/dashboard/downloader-services-grid.svelte";
@@ -187,6 +188,7 @@
 
     <ActivityCard activity={statistics?.activity ?? {}} />
     <LibraryChartsCard stats={statistics?.stats} />
+    <ProviderSplitCard data={statistics?.providerBreakdown ?? []} />
     <ReleaseYearCard data={statistics?.yearReleases ?? []} />
     <ServiceStatusCard statuses={serviceStatuses} />
     <DownloaderServicesGrid services={downloaderServices} />

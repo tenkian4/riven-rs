@@ -147,6 +147,32 @@ pub async fn get_year_releases() -> Result<Vec<(i32, i64)>> {
     Ok(rows.into_iter().map(|r| (r.year, r.count)).collect())
 }
 
+/// Count completed downloads grouped by where they came from: `"usenet"`, or
+/// the debrid store's own name (`"realdebrid"`, `"alldebrid"`, …), from
+/// `filesystem_entries.provider`. Falls back to the fulfilling plugin
+/// (`filesystem_entries.plugin`) for a row written without a provider. Only
+/// `media` entries count; subtitle sidecar rows would double-count a single
+/// download under the same provider.
+pub async fn get_provider_breakdown() -> Result<Vec<(String, i64)>> {
+    #[derive(FromQueryResult)]
+    struct ProviderRow {
+        provider: String,
+        count: i64,
+    }
+    // `entry_type = 'media'` is a predicate only, so no ::text cast is needed.
+    let rows = ProviderRow::find_by_statement(Statement::from_string(
+        DbBackend::Postgres,
+        r#"SELECT COALESCE(provider, plugin) AS provider, COUNT(*)::bigint AS count
+           FROM filesystem_entries
+           WHERE entry_type = 'media' AND COALESCE(provider, plugin) IS NOT NULL
+           GROUP BY 1
+           ORDER BY count DESC, provider ASC"#,
+    ))
+    .all(orm())
+    .await?;
+    Ok(rows.into_iter().map(|r| (r.provider, r.count)).collect())
+}
+
 /// Most days of history the calendar will return, however many are asked for.
 pub const CALENDAR_MAX_HISTORY_DAYS: i64 = 365;
 

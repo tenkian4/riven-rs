@@ -4,6 +4,7 @@ import type {
 	IndexerStats,
 	LibraryStats,
 	NntpProviderHealth,
+	ProviderBreakdown,
 	SettingsSection,
 	UsenetStreamingHealth,
 	UsenetTitleHealth,
@@ -40,6 +41,10 @@ export const STATS_QUERY = `
             year
             count
         }
+        providerBreakdown {
+            provider
+            count
+        }
     }
 `;
 
@@ -47,6 +52,7 @@ export type DashboardStats = {
 	stats: LibraryStats;
 	activity: Record<string, number>;
 	yearReleases: YearRelease[];
+	providerBreakdown: ProviderBreakdown[];
 };
 
 export const ACTIVE_PLAYBACK_QUERY = `
