@@ -196,11 +196,28 @@ pub(crate) async fn push_requested_seasons(show_id: i64, queue: &JobQueue) {
     let seasons = repo::get_all_requested_seasons_for_show(show_id)
         .await
         .unwrap_or_default();
+    let now = Utc::now();
     for season in seasons {
         if matches!(
             season.state,
             MediaItemState::Completed | MediaItemState::Failed | MediaItemState::Paused
         ) {
+            continue;
+        }
+        // A show itself never accrues failures — its children do — so it passes
+        // the library sweep's cooldown every pass, and this fan-out used to
+        // push every unfinished season, then (via the season's scrape) every
+        // episode, whatever their own backoff said: a show nothing could be
+        // found for searched all its episodes on every sweep, ten minutes
+        // apart, until the indexers rate-limited the whole instance. The sweep
+        // retries seasons and episodes directly, each under its own cooldown,
+        // so skipping one that is still cooling down loses nothing.
+        if repo::is_in_retry_cooldown(season.failed_attempts, season.last_scrape_attempt_at, now) {
+            tracing::debug!(
+                id = season.id,
+                failed_attempts = season.failed_attempts,
+                "fan-out: season is still in its retry cooldown; leaving it to the library sweep"
+            );
             continue;
         }
         queue
@@ -218,7 +235,18 @@ pub(crate) async fn fan_out_to_children(parent: &MediaItem, queue: &JobQueue) {
             let episodes = repo::get_incomplete_episodes_for_season(parent.id)
                 .await
                 .unwrap_or_default();
+            let now = Utc::now();
             for ep in episodes {
+                // See `push_requested_seasons`: an episode keeps its own
+                // backoff however often its season is reprocessed.
+                if repo::is_in_retry_cooldown(ep.failed_attempts, ep.last_scrape_attempt_at, now) {
+                    tracing::debug!(
+                        id = ep.id,
+                        failed_attempts = ep.failed_attempts,
+                        "fan-out: episode is still in its retry cooldown; leaving it to the library sweep"
+                    );
+                    continue;
+                }
                 queue
                     .push_process_media_item(ProcessMediaItemJob::new(ep.id))
                     .await;

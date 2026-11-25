@@ -1,5 +1,5 @@
 use anyhow::Result;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use riven_core::entities::{item_requests, media_item_blacklisted_streams, media_items, streams};
 use riven_core::types::*;
 use sea_orm::ActiveValue::{NotSet, Set, Unchanged};
@@ -194,6 +194,23 @@ pub fn cooldown_for_failed_attempts(failed_attempts: i32) -> chrono::Duration {
         n if n >= 2 => chrono::Duration::hours(2),
         _ => chrono::Duration::minutes(30),
     }
+}
+
+/// Whether an item is still waiting out the retry cooldown its failures earned:
+/// it has failed before and its last attempt is more recent than
+/// [`cooldown_for_failed_attempts`] allows. The Rust twin of
+/// [`FAILED_ATTEMPTS_COOLDOWN_SQL`], for code that has an item in hand rather
+/// than a query to filter — the fan-out from a show or season to its children,
+/// which used to push every unfinished child whatever its history. An item that
+/// has never failed is never in cooldown, so fresh work is not held back.
+pub fn is_in_retry_cooldown(
+    failed_attempts: i32,
+    last_scrape_attempt_at: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+) -> bool {
+    failed_attempts > 0
+        && last_scrape_attempt_at
+            .is_some_and(|last| now - last < cooldown_for_failed_attempts(failed_attempts))
 }
 
 /// Fetch all pending top-level items needing a retry: Indexed, Scraped, or PartiallyCompleted.
